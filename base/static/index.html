@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rubble Node Base</title>
+<!-- 100% offline: no CDNs, no web fonts, no external requests. -->
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #151a20; --panel2: #1c232b; --line: #2b343e;
+    --text: #f2f5f8; --muted: #a3afbc; --blue: #4ea1ff;
+    --s-none: #6b7480; --s-possible: #ff8c1a; --s-likely: #ffd51a;
+    --s-confirmed: #22c55e; --s-unresp: #ff3b3b; --s-lost: #3a414a;
+    --danger: #ff3b3b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  button, input { font: inherit; }
+
+  /* ---------- top banner ---------- */
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px;
+    flex-wrap: wrap; padding: 10px 20px; background: #000; border-bottom: 2px solid var(--line); }
+  .offline { background: var(--blue); color: #001; font-weight: 800; padding: 6px 12px;
+    border-radius: 6px; letter-spacing: .02em; white-space: nowrap; }
+  header h1 { font-size: 20px; margin: 0; font-weight: 700; flex: 1; min-width: 160px; }
+  .conn { display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--s-none); flex: none; }
+  .dot.ok { background: var(--s-confirmed); box-shadow: 0 0 8px var(--s-confirmed); }
+  .dot.bad { background: var(--s-unresp); animation: blink 1s steps(2) infinite; }
+  #clock { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+  /* ---------- layout ---------- */
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; padding: 20px; }
+  #nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr));
+    gap: 20px; align-content: start; }
+  #empty { color: var(--muted); font-size: 20px; padding: 40px 0; }
+
+  /* ---------- node card ---------- */
+  .card { background: var(--panel); border: 3px solid var(--line); border-radius: 14px;
+    padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .card.st-UNRESPONSIVE { border-color: var(--s-unresp); animation: pulse-border 1.2s ease-in-out infinite; }
+  .card-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .node-name { font-size: 26px; font-weight: 800; }
+  .pill { font-size: 30px; font-weight: 900; padding: 6px 18px; border-radius: 999px;
+    letter-spacing: .03em; color: #fff; background: var(--s-none); }
+  .pill.NO-SIGNS { background: var(--s-none); }
+  .pill.POSSIBLE { background: var(--s-possible); color: #111; }
+  .pill.LIKELY { background: var(--s-likely); color: #111; }
+  .pill.CONFIRMED { background: var(--s-confirmed); color: #04210f; }
+  .pill.UNRESPONSIVE { background: var(--s-unresp); animation: pulse 1s ease-in-out infinite; }
+  .pill.LOST { background: var(--s-lost); color: #cfd6de; border: 2px dashed #8a949f; }
+  .why { font-size: 20px; color: var(--text); }
+  .why .prev { color: var(--muted); font-size: 16px; display: block; }
+
+  .danger { display: none; background: repeating-linear-gradient(-45deg, #ffcc00 0 18px, #111 18px 36px);
+    border-radius: 10px; padding: 6px; }
+  .danger span { display: block; background: var(--danger); color: #fff; font-weight: 900;
+    font-size: 22px; text-align: center; padding: 10px; border-radius: 6px; }
+  .card.has-danger .danger { display: block; animation: pulse 1s ease-in-out infinite; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .stat { background: var(--panel2); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+  .stat .k { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+  .stat .v { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .stat .s { color: var(--muted); font-size: 14px; }
+  .warn { color: var(--s-possible) !important; }
+  .bad  { color: var(--s-unresp) !important; }
+
+  .survivor { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .survivor .stat { border-left: 5px solid var(--blue); }
+  .survivor .v { font-size: 26px; }
+  .yes { color: var(--s-unresp); } .no { color: var(--s-confirmed); } .unk { color: var(--muted); }
+
+  .chart-wrap { background: var(--panel2); border-radius: 10px; padding: 8px 10px 4px; }
+  .chart-wrap .k { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
+    display: flex; justify-content: space-between; }
+  canvas { width: 100%; height: 150px; display: block; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btn { min-height: 46px; padding: 8px 14px; border-radius: 10px; border: 2px solid var(--line);
+    background: #26303a; color: var(--text); font-weight: 700; cursor: pointer; }
+  .btn:hover { border-color: var(--blue); }
+  .btn:disabled { opacity: .5; cursor: wait; }
+  .btn.primary { background: var(--blue); border-color: var(--blue); color: #001; }
+  .btn.preset { font-weight: 600; background: var(--panel2); }
+  .msg-row { display: flex; gap: 8px; }
+  .msg-row input { flex: 1; min-width: 0; min-height: 46px; padding: 8px 12px; border-radius: 10px;
+    border: 2px solid var(--line); background: #0f1318; color: var(--text); }
+  .msg-row input:focus, .btn:focus-visible { outline: 3px solid var(--blue); outline-offset: 1px; }
+  .msg-row input.err { border-color: var(--s-unresp); }
+  .feedback { min-height: 22px; font-weight: 600; color: var(--muted); }
+  .feedback.ok { color: var(--s-confirmed); } .feedback.err { color: var(--s-unresp); }
+  .count { color: var(--muted); font-size: 13px; align-self: center; font-variant-numeric: tabular-nums; }
+
+  /* ---------- timeline ---------- */
+  aside { background: var(--panel); border: 2px solid var(--line); border-radius: 14px; padding: 14px;
+    align-self: start; position: sticky; top: 80px; max-height: calc(100vh - 100px); display: flex;
+    flex-direction: column; min-width: 0; }
+  aside h2 { margin: 0 0 10px; font-size: 20px; }
+  #timeline { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+  #timeline li { display: grid; grid-template-columns: 12px auto 1fr; gap: 4px 10px; align-items: baseline;
+    padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  #timeline li .tdot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); align-self: center; }
+  #timeline li time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #timeline li.out { color: #bcdcff; } #timeline li.out .tdot { background: var(--blue); }
+  #timeline li.new { animation: flash 1.5s ease-out; }
+
+  @keyframes pulse { 50% { opacity: .55; } }
+  @keyframes pulse-border { 50% { box-shadow: 0 0 0 6px rgba(255, 59, 59, .35); } }
+  @keyframes blink { 50% { opacity: .2; } }
+  @keyframes flash { from { background: rgba(78, 161, 255, .3); } to { background: transparent; } }
+
+  @media (max-width: 1000px) {
+    main { grid-template-columns: 1fr; }
+    aside { position: static; max-height: 60vh; }
+  }
+  @media (max-width: 560px) {
+    header { padding: 8px 12px; gap: 10px; } header h1 { display: none; }
+    #clock { font-size: 22px; }
+    main { padding: 12px; gap: 12px; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .pill { font-size: 24px; } .node-name { font-size: 22px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <span class="offline">OFFLINE MODE: LoRa only</span>
+  <h1>Rubble Survivor Nodes</h1>
+  <span class="conn" title="Receiver / simulator feeding this base station"><span id="srcDot" class="dot"></span><span id="srcText">Receiver: ?</span></span>
+  <span class="conn" title="Live link between this page and the base station"><span id="wsDot" class="dot"></span><span id="wsText">Connecting…</span></span>
+  <span id="clock">--:--:--</span>
+</header>
+
+<main>
+  <section id="nodes"><div id="empty">Waiting for the first node to report…</div></section>
+  <aside>
+    <h2>Timeline</h2>
+    <ol id="timeline"></ol>
+  </aside>
+</main>
+
+<template id="cardTpl">
+  <article class="card">
+    <div class="card-head">
+      <span class="node-name" data-r="name"></span>
+      <span class="pill" data-r="pill"></span>
+    </div>
+    <div class="why" data-r="why"></div>
+    <div class="danger"><span>⚠ Pile movement: clear the area</span></div>
+    <div class="stats">
+      <div class="stat"><div class="k">Last heard</div><div class="v" data-r="seen">–</div></div>
+      <div class="stat"><div class="k">Signal</div><div class="v" data-r="rssi">–</div><div class="s" data-r="rssiQ"></div></div>
+      <div class="stat"><div class="k">Battery</div><div class="v" data-r="bat">–</div></div>
+      <div class="stat"><div class="k">CO₂ ppm</div><div class="v" data-r="co2">–</div><div class="s" data-r="co2d"></div></div>
+    </div>
+    <div class="survivor">
+      <div class="stat"><div class="k">Injured?</div><div class="v" data-r="injured">unknown</div></div>
+      <div class="stat"><div class="k">People</div><div class="v" data-r="people">unknown</div></div>
+    </div>
+    <div class="chart-wrap">
+      <div class="k"><span>CO₂, last 10 min</span><span>- - baseline</span></div>
+      <canvas data-r="chart"></canvas>
+    </div>
+    <div class="controls">
+      <button class="btn primary" data-cmd="CALL">📣 Call now</button>
+      <button class="btn" data-cmd="ASK" data-q="injured">Ask: injured?</button>
+      <button class="btn" data-cmd="ASK" data-q="count">Ask: how many?</button>
+    </div>
+    <div class="controls">
+      <button class="btn preset" data-cmd="MSG" data-txt="Help is coming. Stay still.">“Help is coming. Stay still.”</button>
+      <button class="btn preset" data-cmd="MSG" data-txt="Tap 3 times if you can hear us.">“Tap 3 times if you can hear us.”</button>
+    </div>
+    <form class="msg-row" data-r="form" autocomplete="off">
+      <input data-r="txt" maxlength="60" placeholder="Message to node screen (max 60)" aria-label="Message to node screen">
+      <span class="count" data-r="count">0/60</span>
+      <button class="btn" type="submit">Send</button>
+    </form>
+    <div class="feedback" data-r="fb" role="status"></div>
+  </article>
+</template>
+
+<script>
+"use strict";
+const STATUS_COLOR = { "NO SIGNS": "#6b7480", POSSIBLE: "#ff8c1a", LIKELY: "#ffd51a",
+  CONFIRMED: "#22c55e", UNRESPONSIVE: "#ff3b3b", LOST: "#3a414a" };
+const LOST_AFTER = 90;
+
+const nodes = new Map();     // n -> latest node data from server
+const cards = new Map();     // n -> { el, r: {refs} }
+const seenEvents = new Set();
+let serverOffset = 0;        // server clock - this browser's clock (other laptops may be off)
+
+const $ = (id) => document.getElementById(id);
+const serverNow = () => Date.now() / 1000 + serverOffset;
+const pad = (x) => String(x).padStart(2, "0");
+const hms = (ts) => { const d = new Date((ts - serverOffset) * 1000);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+function ago(sec) {
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s ago`;
+  return `${Math.floor(sec / 3600)}h ago`;
+}
+
+// ---------- cards ----------
+function getCard(n) {
+  if (cards.has(n)) return cards.get(n);
+  $("empty")?.remove();
+  const el = $("cardTpl").content.firstElementChild.cloneNode(true);
+  const r = {};
+  el.querySelectorAll("[data-r]").forEach((x) => (r[x.dataset.r] = x));
+  r.name.textContent = `Node ${n}`;
+  el.querySelectorAll("button[data-cmd]").forEach((b) => b.addEventListener("click", () => {
+    const cmd = { t: b.dataset.cmd, n };
+    if (b.dataset.q) cmd.q = b.dataset.q;
+    if (b.dataset.txt) cmd.txt = b.dataset.txt;
+    send(cmd, b, r);
+  }));
+  r.txt.addEventListener("input", () => { r.count.textContent = `${r.txt.value.length}/60`; r.txt.classList.remove("err"); });
+  r.form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const txt = r.txt.value.trim();
+    if (!txt) { r.txt.classList.add("err"); feedback(r, "Type a message first.", "err"); r.txt.focus(); return; }
+    send({ t: "MSG", n, txt }, r.form.querySelector("button"), r, () => { r.txt.value = ""; r.count.textContent = "0/60"; });
+  });
+  // keep cards ordered by node number
+  const after = [...cards.keys()].filter((k) => k > n).sort((a, b) => a - b)[0];
+  $("nodes").insertBefore(el, after !== undefined ? cards.get(after).el : null);
+  const card = { el, r };
+  cards.set(n, card);
+  return card;
+}
+
+function render(nd) {
+  const { el, r } = getCard(nd.n);
+  const now = serverNow();
+  const lost = now - nd.last_seen > LOST_AFTER;
+  const status = lost ? "LOST" : nd.last_status || nd.status;
+  el.className = `card st-${status.replace(" ", "-")}` + (nd.danger && !lost ? " has-danger" : "");
+  r.pill.className = `pill ${status.replace(" ", "-")}`;
+  r.pill.textContent = status;
+
+  r.why.textContent = lost ? `No message for ${ago(now - nd.last_seen).replace(" ago", "")}` : nd.why || "";
+  if (lost) {
+    const prev = document.createElement("span");
+    prev.className = "prev";
+    prev.textContent = `Last known: ${nd.last_status}${nd.why && !nd.lost ? ` (${nd.why})` : ""}`;
+    r.why.appendChild(prev);
+  }
+
+  const since = now - nd.last_seen;
+  r.seen.textContent = ago(since);
+  r.seen.className = "v" + (lost ? " bad" : since > 35 ? " warn" : "");
+
+  if (nd.rssi != null) {
+    r.rssi.textContent = `${nd.rssi} dBm`;
+    const q = nd.rssi > -70 ? ["strong", ""] : nd.rssi > -100 ? ["ok", ""] : ["weak", "warn"];
+    r.rssiQ.textContent = q[0]; r.rssiQ.className = "s " + q[1];
+  }
+  if (nd.bat != null) {
+    r.bat.textContent = `${Math.round(nd.bat)}%`;
+    r.bat.className = "v" + (nd.bat < 15 ? " bad" : nd.bat < 30 ? " warn" : "");
+  }
+  if (nd.co2 != null) {
+    r.co2.textContent = Math.round(nd.co2);
+    if (nd.base != null) {
+      const d = Math.round(nd.co2 - nd.base);
+      r.co2d.textContent = `base ${Math.round(nd.base)} (${d >= 0 ? "+" : ""}${d})`;
+      r.co2d.className = "s" + (d > 200 ? " warn" : "");
+    }
+  }
+  const inj = nd.answers?.injured;
+  r.injured.textContent = inj == null ? "unknown" : inj.toUpperCase();
+  r.injured.className = "v " + (inj == null ? "unk" : /^y/i.test(inj) ? "yes" : "no");
+  const cnt = nd.answers?.count;
+  r.people.textContent = cnt == null ? "unknown" : cnt;
+  r.people.className = "v " + (cnt == null ? "unk" : "");
+  drawChart(r.chart, nd);
+}
+
+// ---------- CO2 chart (plain canvas) ----------
+function drawChart(cv, nd) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w) return;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const now = serverNow(), span = 600, left = 44, right = w - 6, top = 8, bottom = h - 18;
+  const pts = (nd.co2_hist || []).filter((p) => now - p[0] <= span);
+  g.font = "12px system-ui, sans-serif";
+  g.fillStyle = "#a3afbc";
+  g.textAlign = "left";  g.fillText("10 min ago", left, h - 3);
+  g.textAlign = "right"; g.fillText("now", right, h - 3);
+  if (!pts.length) { g.textAlign = "center"; g.fillText("no CO₂ data yet", (left + right) / 2, h / 2); return; }
+
+  const vals = pts.flatMap((p) => (p[2] != null ? [p[1], p[2]] : [p[1]]));
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const padY = Math.max(40, (hi - lo) * 0.15);
+  lo = Math.max(0, Math.floor((lo - padY) / 50) * 50); hi = Math.ceil((hi + padY) / 50) * 50;
+  const X = (t) => left + (right - left) * (1 - (now - t) / span);
+  const Y = (v) => bottom - (bottom - top) * (v - lo) / (hi - lo);
+
+  g.strokeStyle = "#2b343e"; g.lineWidth = 1;
+  g.textAlign = "right"; g.textBaseline = "middle";
+  for (const v of [lo, (lo + hi) / 2, hi]) {
+    g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke();
+    g.fillText(Math.round(v), left - 6, Y(v));
+  }
+  g.textBaseline = "alphabetic";
+
+  const base = pts[pts.length - 1][2];
+  if (base != null) {
+    g.setLineDash([6, 5]); g.strokeStyle = "#a3afbc"; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(left, Y(base)); g.lineTo(right, Y(base)); g.stroke();
+    g.setLineDash([]);
+  }
+  const color = STATUS_COLOR[nd.lost ? "LOST" : nd.status] || "#4ea1ff";
+  g.strokeStyle = color === STATUS_COLOR["NO SIGNS"] || color === STATUS_COLOR.LOST ? "#4ea1ff" : color;
+  g.lineWidth = 2.5; g.lineJoin = "round";
+  g.beginPath();
+  pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1]))));
+  g.stroke();
+  const last = pts[pts.length - 1];
+  g.fillStyle = g.strokeStyle;
+  g.beginPath(); g.arc(X(last[0]), Y(last[1]), 4, 0, Math.PI * 2); g.fill();
+}
+
+// ---------- timeline ----------
+function addEvent(ev, isNew) {
+  if (!ev || (ev.id != null && seenEvents.has(ev.id))) return;
+  if (ev.id != null) seenEvents.add(ev.id);
+  const li = document.createElement("li");
+  if (ev.out) li.classList.add("out");
+  if (isNew) li.classList.add("new");
+  const dot = document.createElement("span"); dot.className = "tdot";
+  if (!ev.out) {
+    const st = /status is now (NO SIGNS|POSSIBLE|LIKELY|CONFIRMED|UNRESPONSIVE)/.exec(ev.desc);
+    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : st ? STATUS_COLOR[st[1]] : "#a3afbc";
+  }
+  const t = document.createElement("time"); t.textContent = hms(ev.ts);
+  const txt = document.createElement("span"); txt.textContent = `Node ${ev.n}: ${ev.desc}`;
+  li.append(dot, t, txt);
+  const list = $("timeline");
+  list.insertBefore(li, isNew ? list.firstChild : null);
+  while (list.children.length > 200) list.lastChild.remove();
+}
+
+// ---------- commands ----------
+function feedback(r, text, kind) {   // per-card message under the controls
+  r.fb.textContent = text; r.fb.className = "feedback " + (kind || "");
+  clearTimeout(r.fbTimer); r.fbTimer = setTimeout(() => { r.fb.textContent = ""; }, 6000);
+}
+async function send(cmd, btn, r, onOk) {
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/cmd", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cmd) });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok && body.ok) { feedback(r, `✓ Sent to node ${cmd.n} by LoRa`, "ok"); onOk && onOk(); }
+    else feedback(r, `✗ ${body.error || "send failed (" + res.status + ")"}`, "err");
+  } catch (e) {
+    feedback(r, "✗ Base station unreachable", "err");
+  } finally {
+    setTimeout(() => (btn.disabled = false), 600);  // avoid double-sends on a shaky click
+  }
+}
+
+// ---------- live link ----------
+function setSource(s) {
+  $("srcDot").className = "dot " + (s.connected ? "ok" : "bad");
+  $("srcText").textContent = s.name === "sim" ? "Simulator" : s.connected ? "Receiver OK" : "Receiver offline";
+  $("srcText").title = s.detail || "";
+}
+let retry = 1000;
+function connect() {
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.onopen = () => { retry = 1000; $("wsDot").className = "dot ok"; $("wsText").textContent = "Live"; };
+  ws.onclose = () => {
+    $("wsDot").className = "dot bad"; $("wsText").textContent = "Reconnecting…";
+    setTimeout(connect, retry); retry = Math.min(retry * 2, 10000);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (m) => {
+    let d; try { d = JSON.parse(m.data); } catch { return; }
+    if (d.server_time) serverOffset = d.server_time - Date.now() / 1000;
+    if (d.type === "full") {
+      for (const nd of d.nodes) { nodes.set(nd.n, nd); render(nd); }
+      $("timeline").textContent = ""; seenEvents.clear();
+      d.events.forEach((ev) => addEvent(ev, false));
+      setSource(d.source);
+    } else if (d.type === "node") {
+      nodes.set(d.node.n, d.node); render(d.node); addEvent(d.event, true);
+    } else if (d.type === "event") {
+      addEvent(d.event, true);
+    } else if (d.type === "source") {
+      setSource(d.source);
+    }
+  };
+}
+
+// clock + "last heard" + chart scroll, once a second
+setInterval(() => {
+  const d = new Date();
+  $("clock").textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  nodes.forEach(render);
+}, 1000);
+window.addEventListener("resize", () => nodes.forEach(render));
+connect();
+</script>
+</body>
+</html>
