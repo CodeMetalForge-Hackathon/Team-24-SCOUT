@@ -8,7 +8,7 @@ import json
 
 STATUSES = ("NO SIGNS", "POSSIBLE", "LIKELY", "CONFIRMED", "UNRESPONSIVE")
 EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND", "CO2",
-          "CALL", "RESP", "BEEP", "DANGER", "BOOT")
+          "CALL", "RESP", "BEEP", "DANGER", "BOOT", "REBOOTING")
 BOOT_PARTS = ("sound", "co2", "gps", "button", "speaker")
 CO2_LEVELS = ("LEARNING", "NORMAL", "ELEVATED", "SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")
 CO2_EVIDENCE = ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")   # ELEVATED/NORMAL are info only
@@ -227,8 +227,10 @@ def validate_command(cmd):
         if q not in QUESTIONS:
             raise ValueError("question must be 'injured' or 'count'")
         return {"t": "ASK", "n": n, "q": q}
-    if t == "RESET":
+    if t == "RESET":                       # "clear status": evidence + counters, keeps baselines
         return {"t": "RESET", "n": n}
+    if t == "REBOOT":                      # "full reset": the node restarts cleanly
+        return {"t": "REBOOT", "n": n, "keep_gps": cmd.get("keep_gps", True) is not False}
     if t == "DANGER":
         if not isinstance(cmd.get("on"), bool):
             raise ValueError("danger needs on: true or false")
@@ -241,7 +243,7 @@ def validate_command(cmd):
             raise ValueError("longitude must be a number from -180 to 180")
         label = cmd.get("label") if isinstance(cmd.get("label"), str) else ""
         return {"t": "SETLOC", "n": n, "lat": lat, "lon": lon, "label": label.strip()[:20]}
-    raise ValueError("t must be CALL, MSG, ASK, DANGER, SETLOC or RESET")
+    raise ValueError("t must be CALL, MSG, ASK, DANGER, SETLOC, RESET or REBOOT")
 
 
 def describe(msg, outgoing=False):
@@ -256,7 +258,9 @@ def describe(msg, outgoing=False):
             return {"injured": "Rescuer asked: are you injured?",
                     "count": "Rescuer asked: how many people?"}.get(msg.get("q"), "Rescuer asked a question")
         if t == "RESET":
-            return "Rescuer reset the node (false alarm)"
+            return "Rescuer cleared the node's status (false alarm)"
+        if t == "REBOOT":
+            return "Rescuer restarted the node" + ("" if msg.get("keep_gps", True) else " and cleared its GPS fix")
         if t == "DANGER":
             return "Rescuer turned the danger alarm " + ("ON (test)" if msg.get("on") else "off")
         if t == "SETLOC":
@@ -314,6 +318,8 @@ def describe(msg, outgoing=False):
                 }.get(msg.get("p"), f"Node beeped ({msg.get('p')})")
     if e == "DANGER":
         return "Danger alarm ON" if msg["on"] else "Danger alarm off"
+    if e == "REBOOTING":
+        return "Node restarting…"
     if e == "BOOT":
         parts = msg.get("sensors", {})
         missing = [k for k, ok in parts.items() if not ok]

@@ -95,6 +95,22 @@
   .s-POSSIBLE { background: var(--possible); color: var(--on-possible); }
   .s-NO-SIGNS { background: var(--none); color: var(--on-none); }
   .s-LOST { background: var(--lost); color: var(--on-lost); border: 2px dashed var(--muted); }
+  .s-RESTARTING { background: var(--panel2); color: var(--text); border: 2px dashed var(--none); }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; width: min(560px, 94vw); }
+  dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  dialog h2 { margin: 0 0 6px; font-size: 21px; }
+  .opt { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: 12px; }
+  .opt h3 { margin: 0 0 4px; font-size: 17px; }
+  .opt p { margin: 4px 0 8px; color: var(--muted); font-size: 15px; }
+  .opt.danger { border-color: var(--danger); }
+  .checks label { display: block; padding: 3px 0; }
+  .btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
+  #menu { position: absolute; right: 16px; top: 54px; z-index: 20; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+  #menu button { display: block; width: 100%; text-align: left; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 30; max-width: 92vw;
+    background: var(--text); color: var(--bg); padding: 12px 18px; border-radius: 10px; font-weight: 650; }
   .chip.s-UNRESPONSIVE { animation: pulse 1.2s ease-in-out infinite; }
   .chip.danger { background: var(--danger); color: #fff; }
   .loc { font-size: 13px; font-weight: 750; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--line); white-space: nowrap; }
@@ -193,7 +209,12 @@
   <button id="sound" class="btn small" title="Alert sound on/off">🔇</button>
   <button id="theme" class="btn small" title="Day / night mode">◐</button>
   <span id="clock" class="num">--:--:--</span>
+  <button id="menuBtn" class="btn small" title="Menu" aria-haspopup="true">☰</button>
 </header>
+<div id="menu" hidden>
+  <button class="btn small" id="mNewIncident">New incident… (reset all nodes)</button>
+</div>
+<div id="toast" role="status" hidden></div>
 
 <div id="banner" hidden></div>
 
@@ -292,7 +313,7 @@
         <h3>Node controls</h3>
         <div class="row">
           <button id="bDanger" class="btn warn">⛔ Danger alarm ON (test)</button>
-          <button id="bReset" class="btn">↺ Reset node (false alarm)</button>
+          <button id="bReset" class="btn">↺ Reset node…</button>
         </div>
         <div id="ctlMsg" class="err-text"></div>
       </aside>
@@ -336,11 +357,55 @@
   </section>
 </main>
 
+<dialog id="resetDlg">
+  <h2 id="rdTitle">Reset node</h2>
+  <div class="opt">
+    <h3>Clear status</h3>
+    <p>The node forgets its evidence and counters and goes back to NO SIGNS. Sensors keep their
+      baselines. The history stays on the dashboard. Use for a false alarm.</p>
+    <button id="rdClear" class="btn">Clear status</button> <span id="rdClearMsg" class="err-text"></span>
+  </div>
+  <div class="opt danger">
+    <h3>Full reset (this node)</h3>
+    <p>The node restarts (arming, CO₂ baseline re-learned). Its dashboard history (timeline, chart,
+      alerts, messages, manual location) is <b>archived</b> to <code>base/archive/</code>, then cleared.</p>
+    <div class="checks">
+      <label><input type="checkbox" id="rdKeepGps" checked> Keep the GPS last known fix</label>
+      <label><input type="checkbox" id="rdKeepTeam"> Keep the team assignment</label>
+      <label><input type="checkbox" id="rdKeepNotes"> Keep the notes</label>
+      <label><input type="checkbox" id="rdKeepTag"> Keep the site tag</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="rdConfirm" type="text" placeholder="Type RESET to confirm" autocomplete="off" style="max-width:220px">
+      <button id="rdFull" class="btn danger-fill" disabled>Full reset</button>
+    </div>
+    <div id="rdFullMsg" class="err-text"></div>
+  </div>
+  <div class="row" style="margin-top:14px;justify-content:flex-end"><button id="rdClose" class="btn">Cancel</button></div>
+</dialog>
+
+<dialog id="incidentDlg">
+  <h2>New incident</h2>
+  <div class="opt danger">
+    <p>Every node restarts. The whole dashboard (timeline, alerts, acknowledgements, teams, notes,
+      tags, charts) is <b>archived</b> to <code>base/archive/</code>, then cleared. The base location is kept.</p>
+    <input id="niName" type="text" maxlength="60" placeholder="New incident name">
+    <div class="checks" style="margin-top:6px"><label><input type="checkbox" id="niKeepGps" checked> Keep the nodes' GPS last known fixes</label></div>
+    <div class="row" style="margin-top:8px">
+      <input id="niConfirm" type="text" placeholder="Type RESET to confirm" autocomplete="off" style="max-width:220px">
+      <button id="niGo" class="btn danger-fill" disabled>Start new incident</button>
+    </div>
+    <div id="niMsg" class="err-text"></div>
+  </div>
+  <div class="row" style="margin-top:14px;justify-content:flex-end"><button id="niClose" class="btn">Cancel</button></div>
+</dialog>
+
 <script>
 "use strict";
 // ======================= constants =======================
-const ORDER = ["UNRESPONSIVE", "CONFIRMED", "LIKELY", "POSSIBLE", "NO SIGNS", "LOST"];   // triage order
-const ICON = { UNRESPONSIVE: "⚠", CONFIRMED: "✔", LIKELY: "●", POSSIBLE: "◐", "NO SIGNS": "○", LOST: "✕" };
+const ORDER = ["UNRESPONSIVE", "CONFIRMED", "LIKELY", "POSSIBLE", "NO SIGNS", "RESTARTING", "LOST"];   // triage order
+const ICON = { UNRESPONSIVE: "⚠", CONFIRMED: "✔", LIKELY: "●", POSSIBLE: "◐", "NO SIGNS": "○", RESTARTING: "↻", LOST: "✕" };
+const BOOT_WAIT = 30;              // seconds to wait for the node's BOOT after a full reset
 const GUIDE = {
   UNRESPONSIVE: "Breathing detected but no answer to calls: possible unconscious survivor. HIGH PRIORITY.",
   CONFIRMED: "Conscious survivor in contact at this node. Dispatch extraction team.",
@@ -348,6 +413,7 @@ const GUIDE = {
   POSSIBLE: "Weak sign of life. Investigate when able.",
   "NO SIGNS": "No evidence yet.",
   LOST: "Node silent: check battery or radio.",
+  RESTARTING: "Full reset sent: waiting for the node to restart.",
   DANGER: "Pile movement / danger alarm: clear the area.",
 };
 const LOST_AFTER = 90;
@@ -386,7 +452,13 @@ function ago(sec) {
 function store(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
 function load(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
-function statusOf(nd) { return now() - nd.last_seen > LOST_AFTER ? "LOST" : (nd.last_status || nd.status); }
+function statusOf(nd) {
+  if (nd.pending_reboot) return "RESTARTING";              // until the node's BOOT arrives
+  return now() - nd.last_seen > LOST_AFTER ? "LOST" : (nd.last_status || nd.status);
+}
+function restartText(nd) {
+  return now() - nd.pending_reboot > BOOT_WAIT ? "Reset sent, node not responding: check power" : "restarting…";
+}
 function unackedFor(n) { return alerts.filter((a) => a.n === n && !a.acked_at); }
 function lastAckFor(n) { return alerts.find((a) => a.n === n && a.acked_at); }
 
@@ -461,7 +533,7 @@ function renderTriage() {
     return `<tr data-n="${nd.n}" tabindex="0" class="s-row-${cls(st)}${nd.n === selected ? " sel" : ""}" title="${esc(GUIDE[st])}">
       <td><span class="chip s-${cls(st)}">${ICON[st]} ${st}</span>${nd.danger && st !== "LOST" ? ` <span class="chip danger">⛔ DANGER</span>` : ""}</td>
       <td><span class="nodeid">N${nd.n}</span>${m.tag ? `<span class="tag">${esc(m.tag)}</span>` : ""}</td>
-      <td class="why">${esc(st === "LOST" ? `silent for ${ago(now() - nd.last_seen).replace(" ago", "")} · was ${nd.last_status}` : nd.why)}</td>
+      <td class="why">${esc(st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `silent for ${ago(now() - nd.last_seen).replace(" ago", "")} · was ${nd.last_status}` : nd.why)}</td>
       <td class="hide-sm">${locBadge(nd)}</td>
       <td class="num">${ago(now() - nd.last_seen)}</td>
       <td class="hide-md num">${nd.bat != null ? Math.round(nd.bat) + "%" : "–"}</td>
@@ -524,14 +596,14 @@ function renderDetail() {
   $("dChip").textContent = `${ICON[st]} ${st}`;
   $("dDanger").hidden = !nd.danger;
   $("dGuide").textContent = GUIDE[st];
-  $("dGuide").style.borderLeftColor = `var(--${{ UNRESPONSIVE: "unresp", CONFIRMED: "confirmed", LIKELY: "likely", POSSIBLE: "possible", "NO SIGNS": "none", LOST: "lost" }[st]})`;
+  $("dGuide").style.borderLeftColor = `var(--${{ UNRESPONSIVE: "unresp", CONFIRMED: "confirmed", LIKELY: "likely", POSSIBLE: "possible", "NO SIGNS": "none", RESTARTING: "none", LOST: "lost" }[st]})`;
   $("dDangerGuide").hidden = !nd.danger;
   $("dDangerGuide").textContent = "⛔ " + GUIDE.DANGER;
   // a node's reason may contain a countdown that the node only sends every 5 s: tick it here
   let why = nd.why || "";
   const cd = /\((\d+)s\)$/.exec(why);
   if (cd && nd.why_ts) why = why.replace(/\(\d+s\)$/, `(${Math.max(0, cd[1] - Math.floor(t - nd.why_ts))}s)`);
-  $("dReason").textContent = st === "LOST" ? `Last status: ${nd.last_status}: ${why}` : why;
+  $("dReason").textContent = st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `Last status: ${nd.last_status}: ${why}` : why;
   $("dSince").textContent = `${st === "LOST" ? "Last heard" : "Status since"} ${hms(st === "LOST" ? nd.last_seen : nd.status_since)}` +
     ` · heard ${ago(t - nd.last_seen)}` + (nd.bat != null ? ` · battery ${Math.round(nd.bat)}%` : "");
   $("dAck").hidden = !unackedFor(nd.n).length;
@@ -611,7 +683,7 @@ function drawCo2(cv, nd) {
 }
 
 // ======================= situation radar =======================
-const STATUS_VAR = { UNRESPONSIVE: "--unresp", CONFIRMED: "--confirmed", LIKELY: "--likely", POSSIBLE: "--possible", "NO SIGNS": "--none", LOST: "--lost" };
+const STATUS_VAR = { UNRESPONSIVE: "--unresp", CONFIRMED: "--confirmed", LIKELY: "--likely", POSSIBLE: "--possible", "NO SIGNS": "--none", RESTARTING: "--none", LOST: "--lost" };
 function renderRadar() {
   const cv = $("radar");
   if (view !== "situation" || !cv.clientWidth) return;
@@ -759,6 +831,8 @@ function connect() {
       nodeMeta = d.node_meta || {};
     } else if (d.type === "source") {
       source = d.source;
+    } else if (d.type === "reset") {                     // every screen shows where the archive went
+      toast(d.text);
     }
     renderAll();
   };
@@ -818,8 +892,51 @@ $("bTeam").addEventListener("click", () => post("/api/node_meta", { n: selected,
 $("bTag").addEventListener("click", () => post("/api/node_meta", { n: selected, tag: $("fTag").value, by: operator() }, $("metaMsg"), "✓ tag saved"));
 $("bNotes").addEventListener("click", () => post("/api/node_meta", { n: selected, notes: $("fNotes").value, by: operator() }, $("metaMsg"), "✓ notes saved"));
 $("bDanger").addEventListener("click", () => { const nd = nodes.get(selected); cmd({ t: "DANGER", n: selected, on: !(nd && nd.danger) }, $("ctlMsg"), ""); });
+// ---------- reset dialogs: "Clear status", "Full reset", "New incident" ----------
+function toast(text) {
+  const t = $("toast"); t.textContent = text; t.hidden = false;
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.hidden = true; }, 9000);
+}
+function typedReset(input, button, msg) {          // dangerous buttons need the word RESET
+  const v = input.value.trim();
+  button.disabled = v !== "RESET";
+  msg.className = "err-text";
+  msg.textContent = v && v !== "RESET" ? (v.toUpperCase() === "RESET" ? "Type RESET in capital letters." : "Type exactly RESET to enable the button.") : "";
+}
 $("bReset").addEventListener("click", () => {
-  if (confirm(`Reset node ${selected}? It forgets all evidence and counters (use for a false alarm).`)) cmd({ t: "RESET", n: selected }, $("ctlMsg"), "✓ reset sent");
+  $("rdTitle").textContent = `Reset node ${selected}`;
+  for (const id of ["rdClearMsg", "rdFullMsg"]) $(id).textContent = "";
+  $("rdConfirm").value = ""; $("rdFull").disabled = true;
+  $("rdKeepGps").checked = true; $("rdKeepTeam").checked = $("rdKeepNotes").checked = $("rdKeepTag").checked = false;
+  $("resetDlg").showModal();
+});
+$("rdClose").addEventListener("click", () => $("resetDlg").close());
+$("rdClear").addEventListener("click", async () => {
+  if (!confirm(`Clear the status of node ${selected}? It goes back to NO SIGNS; history is kept.`)) return;
+  if (await cmd({ t: "RESET", n: selected }, $("rdClearMsg"), "✓ cleared")) { $("resetDlg").close(); toast(`Node ${selected}: status cleared`); }
+});
+$("rdConfirm").addEventListener("input", () => typedReset($("rdConfirm"), $("rdFull"), $("rdFullMsg")));
+$("rdFull").addEventListener("click", async () => {
+  $("rdFull").disabled = true;
+  const keep = { gps: $("rdKeepGps").checked, team: $("rdKeepTeam").checked, notes: $("rdKeepNotes").checked, tag: $("rdKeepTag").checked };
+  if (await post("/api/reset", { n: selected, keep, confirm: $("rdConfirm").value.trim(), by: operator() }, $("rdFullMsg"), "✓ done")) $("resetDlg").close();
+  else $("rdFull").disabled = false;
+});
+$("menuBtn").addEventListener("click", (ev) => { ev.stopPropagation(); $("menu").hidden = !$("menu").hidden; });
+document.addEventListener("click", (ev) => { if (!ev.target.closest("#menu")) $("menu").hidden = true; });
+$("mNewIncident").addEventListener("click", () => {
+  $("menu").hidden = true;
+  $("niName").value = ""; $("niConfirm").value = ""; $("niGo").disabled = true; $("niMsg").textContent = ""; $("niKeepGps").checked = true;
+  $("incidentDlg").showModal();
+});
+$("niClose").addEventListener("click", () => $("incidentDlg").close());
+$("niConfirm").addEventListener("input", () => typedReset($("niConfirm"), $("niGo"), $("niMsg")));
+$("niGo").addEventListener("click", async () => {
+  if (!$("niName").value.trim()) { $("niMsg").className = "err-text"; $("niMsg").textContent = "Give the new incident a name."; $("niName").focus(); return; }
+  $("niGo").disabled = true;
+  if (await post("/api/new_incident", { name: $("niName").value, keep_gps: $("niKeepGps").checked, confirm: $("niConfirm").value.trim(), by: operator() }, $("niMsg"), "✓ done")) {
+    $("incidentDlg").close(); selected = null;
+  } else $("niGo").disabled = false;
 });
 $("dCopy").addEventListener("click", async () => {
   const txt = $("dLatLon").textContent;

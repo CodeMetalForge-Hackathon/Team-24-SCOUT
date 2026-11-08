@@ -63,6 +63,39 @@ class EventDB:
         args.append(limit)
         return self.conn.execute(sql, args).fetchall()
 
+    def all_for(self, node=None):
+        """Every logged row (oldest first) for one node, or for everything: for archives."""
+        if node is None:
+            rows = self.conn.execute("SELECT id, ts, node, type, dir, raw FROM events ORDER BY id")
+        else:
+            rows = self.conn.execute("SELECT id, ts, node, type, dir, raw FROM events WHERE node = ? ORDER BY id", (node,))
+        return rows.fetchall()
+
+    def alerts_for(self, node=None):
+        sql = "SELECT id, ts, node, kind, text, acked_by, acked_at FROM alerts"
+        rows = self.conn.execute(sql + " ORDER BY id") if node is None else \
+            self.conn.execute(sql + " WHERE node = ? ORDER BY id", (node,))
+        return [{"id": i, "ts": ts, "n": n, "kind": k, "text": t, "acked_by": by, "acked_at": at}
+                for i, ts, n, k, t, by, at in rows]
+
+    def clear(self, node=None):
+        """Delete a node's history (events, alerts), or everything when node is None.
+        Callers archive first: nothing leaves the live log without a copy."""
+        if node is None:
+            self.conn.execute("DELETE FROM events")
+            self.conn.execute("DELETE FROM alerts")
+        else:
+            self.conn.execute("DELETE FROM events WHERE node = ?", (node,))
+            self.conn.execute("DELETE FROM alerts WHERE node = ?", (node,))
+        self.conn.commit()
+
+    def delete_node_meta(self, node=None):
+        if node is None:
+            self.conn.execute("DELETE FROM node_meta")
+        else:
+            self.conn.execute("DELETE FROM node_meta WHERE node = ?", (node,))
+        self.conn.commit()
+
     # ---- incident settings ----
     def get_kv(self):
         return {k: json.loads(v) for k, v in self.conn.execute("SELECT key, value FROM kv")}

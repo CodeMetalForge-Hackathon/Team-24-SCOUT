@@ -20,8 +20,9 @@ The story (~7 min loop; every node boots at the start: BOOT -> NO SIGNS "startin
   Node 3: no GPS -> NO POSITION until you "Set location manually" on the dashboard
          (-> MANUAL); goes silent at 240 s -> LOST after 90 s
 
-It reacts to dashboard commands like a real node: CALL, MSG, DANGER, SETLOC, RESET
-(RESET restarts the whole story), ASK (node 1 answers).
+It reacts to dashboard commands like a real node: CALL, MSG, DANGER, SETLOC, ASK (node 1
+answers), RESET (clear status) and REBOOT (the node restarts: REBOOTING, BOOT, arming;
+rebooting node 1 replays its story). A silent (LOST) node doesn't answer anything.
 """
 import heapq
 import itertools
@@ -134,6 +135,7 @@ class SimSource(Source):
         self._seq = itertools.count()
         self._lock = threading.Lock()
         self._restart = False
+        self._story_restart = False
 
     def node(self, n):
         return next((nd for nd in self.all if nd.n == n), None)
@@ -314,13 +316,25 @@ class SimSource(Source):
             return                               # radio: sent, but nobody is listening
         log.info("sim node %s got %s", node.n, cmd)
         t = cmd["t"]
-        if t == "RESET":
+        if t == "RESET":                         # clear status: evidence + counters, keep baselines
             def do_reset():
-                node.brain.reset()
+                node.brain.reset("status cleared by base")
                 node.caller.reset(time.monotonic())
+                node.answer_next = None
+                node.call_audio_end = node.siren_until = 0
+            self.later(0.3, do_reset)
+        elif t == "REBOOT":                      # full reset: the node restarts
+            self.emit(node, t="EV", e="REBOOTING")
+
+            def do_reboot():
+                if cmd.get("keep_gps", True):
+                    node.loc.manual = None       # manual location was only in RAM
+                else:
+                    node.loc = location.Location(live_secs=10)   # saved fix cleared too
+                node.power_on(time.monotonic())  # -> BOOT, arming, CO2 baseline re-learned
                 if node is self.n1:
-                    self._restart = True        # replay the story from the start
-            self.later(0.5, do_reset)
+                    self._story_restart = True   # replay node 1's walk-through
+            self.later(1.5, do_reboot)
         elif t == "CALL":
             node.caller.request()
         elif t == "MSG":
@@ -348,6 +362,8 @@ class SimSource(Source):
                     for nd in self.all:
                         nd.power_on(now)
                     start, pos, idx, self._restart = now, 0, 0, False
+                if self._story_restart:                     # node 1 was rebooted from the dashboard
+                    start, pos, idx, self._story_restart = now, 0, 0, False
                 while idx < len(steps) and pos >= steps[idx][0]:
                     steps[idx][1]()
                     idx += 1
