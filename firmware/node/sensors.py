@@ -97,6 +97,71 @@ class Vibration:
         return tapped
 
 
+class CO2Sensor:
+    """SCD41 CO2 + humidity sensor (on the SparkFun SEN-25200, I2C 0x62).
+    The SEN55 on the same board is deliberately NOT started: its fan adds
+    noise right next to the sound sensor.
+
+    update(now) is non-blocking: it checks for data at most once a second
+    (the SCD41 makes a new reading every ~5 s) and returns True only when a
+    new reading arrived. The level logic lives in co2logic.py.
+    If the sensor is missing, .ok is False and the node runs without CO2."""
+
+    def __init__(self, i2c, cfg):
+        from co2logic import CO2Levels
+        self.ok = False
+        self.temp = None
+        self.last_check = 0
+        self.errors = 0
+        self.levels = CO2Levels(cfg.CO2_BASELINE_SECS, cfg.CO2_RISE_PPM, cfg.CO2_SLIGHT_PPM,
+                                cfg.CO2_BASELINE_FOLLOW, cfg.CO2_TREND_MINUTES,
+                                cfg.CO2_TREND_PPM, cfg.RH_RISE_POINTS, start=time.monotonic())
+        try:
+            import adafruit_scd4x  # type: ignore
+            self.scd = adafruit_scd4x.SCD4X(i2c)
+            self.scd.stop_periodic_measurement()   # in case it was left running
+            self.scd.start_periodic_measurement()
+            self.ok = True
+            print("CO2 sensor started; learning baseline for", cfg.CO2_BASELINE_SECS, "s")
+        except Exception as e:                      # not plugged in / wrong wiring
+            print("CO2 sensor NOT found (", e, ") - continuing without CO2")
+
+    def update(self, now):
+        if not self.ok or now - self.last_check < 1:
+            return False
+        self.last_check = now
+        try:
+            if not self.scd.data_ready:
+                return False
+            ppm = self.scd.CO2
+            rh = self.scd.relative_humidity
+            self.temp = self.scd.temperature
+        except Exception as e:                      # cable pulled while running
+            self.errors += 1
+            if self.errors == 1 or self.errors % 60 == 0:
+                print("CO2 read failed (", e, ") - will keep trying")
+            return False
+        self.errors = 0
+        self.levels.feed(now, ppm, rh)
+        return True
+
+    # shortcuts so code.py can say co2.level, co2.delta, ...
+    @property
+    def ppm(self): return self.levels.ppm
+    @property
+    def rh(self): return self.levels.rh
+    @property
+    def level(self): return self.levels.level
+    @property
+    def delta(self): return self.levels.delta
+    @property
+    def rh_delta(self): return self.levels.rh_delta
+    @property
+    def baseline(self): return self.levels.baseline
+    @property
+    def rh_baseline(self): return self.levels.rh_baseline
+
+
 class SoundSensor:
     """Grove Sound Sensor on an analog pin.
     'TAP'   = short AND very loud (knock)

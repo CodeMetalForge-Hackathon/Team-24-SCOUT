@@ -5,12 +5,13 @@ import supervisor  # type: ignore
 import config
 from ui import UI
 from assess import Assessor, CONFIRMED
-from sensors import Button, Vibration, SoundSensor
+from sensors import Button, Vibration, SoundSensor, CO2Sensor
 
 arm_until = time.monotonic() + config.ARMING_SECS   # presses before this are ignored
 
 ui = UI(config.NODE_ID, config.PIN_SPEAKER)
-brain = Assessor(activity_window=config.ACTIVITY_WINDOW, confirm_window=config.CONFIRM_WINDOW)
+brain = Assessor(activity_window=config.ACTIVITY_WINDOW, confirm_window=config.CONFIRM_WINDOW,
+                 combine_window=config.COMBINE_WINDOW)
 
 # Both buttons feed the SAME logic: Grove LED button (main) + built-in D1 (backup)
 buttons = [
@@ -28,6 +29,32 @@ if config.ENABLE_SOUND:
                         config.SOUND_TAP_THRESHOLD, config.SOUND_VOICE_THRESHOLD,
                         config.SOUND_WINDOW, config.TAP_MAX_WINDOWS,
                         config.VOICE_MIN_WINDOWS)
+
+co2 = None
+if config.ENABLE_CO2:
+    try:
+        import board  # type: ignore
+        co2 = CO2Sensor(board.I2C(), config)
+    except Exception as e:           # board.I2C() fails if nothing is on the I2C wires
+        print("I2C not available (", e, ") - continuing without CO2")
+    if co2 is not None and not co2.ok:
+        co2 = None
+
+
+def signed(x):
+    """+12 / -3 (written out, so we don't rely on '%+d' support)."""
+    x = int(x)
+    return ("+%d" if x >= 0 else "%d") % x
+
+
+def co2_note(now):
+    """Short CO2 text for the screen header."""
+    if co2 is None:
+        return ""
+    if co2.level == "LEARNING":
+        return "CO2 learning %ds" % int(co2.levels.learning_left(now) + 0.999)
+    watch = " watch" if co2.level == "SLIGHT_RISE" else ""
+    return "CO2 %d (%s) RH%s%s" % (co2.ppm, signed(co2.delta), signed(co2.rh_delta), watch)
 
 
 def report(**msg):
@@ -81,8 +108,9 @@ def read_commands(now):
             cmd_buf += ch
 
 
-print("Node", config.NODE_ID, "starting. Demo mode:", config.DEMO_MODE,
+print("Node", config.NODE_ID, "starting. Profile:", config.PROFILE,
       "| presses ignored for", config.ARMING_SECS, "s")
+last_co2_level = None
 last_shown = None
 last_st = (None, None)
 last_st_time = -100
@@ -124,6 +152,21 @@ while True:
             report(t="EV", e=ev)                 # "TAP" (knocking) or "VOICE"
             brain.activity(now, ev)              # unprompted sound = weak evidence -> POSSIBLE
 
+    if co2 and co2.update(now):                  # True only when a new reading (~every 5 s)
+        print("CO2: %d ppm (%s)  RH %.0f%% (%s)  %s"
+              % (co2.ppm, signed(co2.delta), co2.rh, signed(co2.rh_delta), co2.level))
+        brain.set_co2(co2.level, co2.delta, co2.rh_delta, now, co2.levels.trend_min)
+        if co2.level != last_co2_level:          # tell the base only when the level changes
+            print("EVENT: CO2", last_co2_level, "->", co2.level)
+            ev = {"t": "EV", "e": "CO2", "lvl": co2.level, "prev": last_co2_level,
+                  "delta": int(co2.delta), "rh_delta": int(co2.rh_delta)}
+            if co2.baseline is not None:
+                ev["base"] = int(co2.baseline)
+            if co2.level == "SLOW_BUILDUP":
+                ev["min"] = co2.levels.trend_min
+            report(**ev)
+            last_co2_level = co2.level
+
     # ---------- 2. DECIDE ----------
     status, reason = brain.evaluate(now)
     waiting = brain.awaiting_second(now)
@@ -134,11 +177,12 @@ while True:
         b.set_led(now, led_mode)
 
     if now < arm_until:
-        note = "ARMING... %ds" % int(arm_until - now + 0.999)
+        note = "ARMING %ds " % int(arm_until - now + 0.999)
     elif now < stuck_until:
-        note = "button stuck?"
+        note = "STUCK? "
     else:
         note = ""
+    note += co2_note(now)
     prompt = "PRESS AGAIN!" if waiting else ""
     message = ui.message(now)
     shown = (status, reason, brain.danger, prompt, note, message)
@@ -160,6 +204,14 @@ while True:
         hb = {"t": "HB", "st": status, "why": reason, "dg": int(brain.danger)}
         if sound:
             hb["snd"] = loudest
+        hb["prof"] = config.PROFILE
+        if co2 and co2.ppm is not None:
+            hb["co2"] = co2.ppm
+            hb["rh"] = round(co2.rh, 1)
+            hb["lvl"] = co2.level
+            if co2.baseline is not None:
+                hb["base"] = int(co2.baseline)
+                hb["rh_base"] = round(co2.rh_baseline, 1)
         report(**hb)
         loudest = 0
         next_hb = now + config.HEARTBEAT_INTERVAL

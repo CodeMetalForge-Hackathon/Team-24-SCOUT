@@ -56,13 +56,12 @@ class UI:
         self.bg[0] = bg
         for l in (self.header, self.status, self.reason, self.flag):
             l.color = fg
-        self.header.text = "NODE %d" % self.node_id + ("   " + note if note else "")
+        # header: node number + notes (arming, CO2 reading, stuck button)
+        self.header.text = ("N%d  " % self.node_id + note)[:LINE]
         self.status.text = status
-        if message:                                  # 2 lines so a 60-char message fits
-            m = "MSG: " + message
-            self.reason.text = m[:LINE] + ("\n" + m[LINE:2 * LINE] if len(m) > LINE else "")
-        else:
-            self.reason.text = reason[:LINE]
+        # reason / rescuer message get 2 lines so ~60-76 characters fit
+        text = "MSG: " + message if message else reason
+        self.reason.text = text[:LINE] + ("\n" + text[LINE:2 * LINE] if len(text) > LINE else "")
         self.flag.text = "!! PILE MOVING" if danger else prompt
 
     def beep(self, freq=2000, dur=0.15):

@@ -2,7 +2,11 @@ import board
 import digitalio
 
 NODE_ID = 1
-DEMO_MODE = True
+
+# "DEMO": tuned for breathing on the sensor at close range (live demo)
+# "FIELD": tuned for real rubble: smaller, slower CO2 changes (see docs/co2.md)
+PROFILE = "DEMO"
+DEMO_MODE = PROFILE == "DEMO"
 CALL_INTERVAL = 20 if DEMO_MODE else 60   # seconds between "calls"
 ACTIVITY_WINDOW = 15 if DEMO_MODE else 120
 HEARTBEAT_INTERVAL = 10 if DEMO_MODE else 30  # seconds between {"t":"HB"} report lines
@@ -15,7 +19,8 @@ STUCK_SECS = 5               # held this long = debris on the button, not a pers
 
 # ---- turn sensors on/off ----
 ENABLE_VIBRATION = False     # set True once the vibration sensor is wired to 3V/GND/5
-ENABLE_SOUND = False
+ENABLE_SOUND = True
+ENABLE_CO2 = True            # SCD41 on the SEN-25200 via STEMMA QT / I2C
 
 # ---- PRESS ME (main): Grove Red LED Button ----
 PIN_GROVE_BUTTON  = board.A3
@@ -41,6 +46,24 @@ SOUND_WINDOW = 0.03             # 30 ms slices
 TAP_MAX_WINDOWS = 4             # TAP lasts <= 4 slices (~0.12 s)
 VOICE_MIN_WINDOWS = 6           # VOICE lasts >= 6 slices (~0.2 s)
 
-# ---- CO2 (used later) ----
-CO2_BASELINE_SECS = 30 if DEMO_MODE else 120
-CO2_RISE_PPM = 200
+# ---- CO2 (SCD41) ----
+# Measured (tests/RESULTS.md): room ~810 ppm; breath at close range +150 ppm
+# within 5 s, peak +460 after 30 s, slow decay; humidity 48% -> 54%.
+if PROFILE == "DEMO":
+    CO2_BASELINE_SECS = 30       # learn the room for this long after power-on
+    CO2_RISE_PPM = 200           # delta for RISING (2 readings in a row)
+    CO2_SLIGHT_PPM = 100         # delta for SLIGHT_RISE ("watch")
+    CO2_BASELINE_FOLLOW = 0.02   # how fast the baseline follows the room (NORMAL only)
+    CO2_TREND_MINUTES = 3        # SLOW_BUILDUP: look back this many minutes...
+    CO2_TREND_PPM = 100          # ...for a steady climb of at least this much
+    RH_RISE_POINTS = 3           # humidity +3 points while RISING = BREATHING
+else:  # FIELD
+    CO2_BASELINE_SECS = 120
+    CO2_RISE_PPM = 80
+    CO2_SLIGHT_PPM = 40
+    CO2_BASELINE_FOLLOW = 0.001  # nearly fixed baseline
+    CO2_TREND_MINUTES = 15
+    CO2_TREND_PPM = 60
+    RH_RISE_POINTS = 3
+
+COMBINE_WINDOW = 120   # CO2 + a knock/voice within this many seconds = LIKELY
