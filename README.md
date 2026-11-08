@@ -102,7 +102,8 @@ A planned integration is to play a locally stored spoken message automatically a
 The intended Adafruit speaker was unavailable for this hackathon, so this feature is not part of the demo. The current demo uses the Grove speaker for beeps. Future implementation will require suitable speech-playback hardware and a tested deployment trigger to avoid playing messages prematurely.
 
 Other future work includes validated relay operation, GPS/GNSS integration, ATAK integration, stronger audio-event assessment, battery/runtime testing, and deployment trials.
-Team
+
+<img width="3888" height="2438" alt="IMG_6800" src="https://github.com/user-attachments/assets/05d3b520-4946-4650-94ca-044a2385d55a" />
 
 Built by Team 24 for the Code Metal Forge Hackathon 2026.
 License
