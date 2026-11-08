@@ -52,6 +52,31 @@ class ParseValid(unittest.TestCase):
             self.assertIsNone(err, line)
             self.assertEqual(describe(msg), text)
 
+    def test_co2_events_and_heartbeat(self):
+        cases = [('{"t":"EV","n":1,"e":"CO2","lvl":"SUDDEN_RISE","rise":240,"secs":10,"prev":"NORMAL"}',
+                  "Sudden CO2 rise +240 ppm in 10 s"),
+                 ('{"t":"EV","n":1,"e":"CO2","lvl":"BREATHING","rise":380,"secs":10,"rh_jump":6}',
+                  "Breathing detected: CO2 +380 ppm, humidity +6%"),
+                 ('{"t":"EV","n":1,"e":"CO2","lvl":"SLOW_BUILDUP","rise":70,"secs":720}',
+                  "Slow CO2 build-up +70 ppm over 12 min"),
+                 ('{"t":"EV","n":1,"e":"CO2","lvl":"ELEVATED","prev":"BREATHING"}', "CO2 evidence expired"),
+                 ('{"t":"EV","n":1,"e":"CO2","lvl":"NORMAL","prev":"SUDDEN_RISE"}', "CO2 evidence expired"),
+                 ('{"t":"EV","n":1,"e":"CO2","lvl":"ELEVATED","prev":"NORMAL"}',
+                  "CO2 high but steady (room air?)"),
+                 ('{"t":"EV","n":1,"e":"CO2","lvl":"NORMAL","prev":null,"base":810}',
+                  "CO2 baseline learned: 810 ppm")]
+        for line, text in cases:
+            msg, err = parse_line(line)
+            self.assertIsNone(err, line)
+            self.assertEqual(describe(msg), text)
+        self.assertIsNone(parse_line('{"t":"EV","n":1,"e":"CO2","lvl":"RISING"}')[0])   # old level name
+        msg, _ = parse_line('{"t":"HB","n":1,"co2":1012,"base":810,"rh":53.5,"rh_base":48,'
+                            '"lvl":"BREATHING","prof":"DEMO","hold":42}')
+        self.assertEqual((msg["lvl"], msg["prof"], msg["rh"], msg["hold"]), ("BREATHING", "DEMO", 53.5, 42))
+        msg, _ = parse_line('{"t":"HB","n":1,"lvl":"WEIRD","prof":"PARTY"}')
+        self.assertNotIn("lvl", msg)
+        self.assertNotIn("prof", msg)
+
     def test_count_answer_number(self):
         msg, err = parse_line('{"t":"EV","n":1,"e":"ANS","q":"count","a":2}')
         self.assertIsNone(err)

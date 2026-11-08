@@ -7,7 +7,10 @@ so the parser NEVER raises: it returns (msg, None) or (None, "why it was rejecte
 import json
 
 STATUSES = ("NO SIGNS", "POSSIBLE", "LIKELY", "CONFIRMED", "UNRESPONSIVE")
-EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND")
+EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND", "CO2")
+CO2_LEVELS = ("LEARNING", "NORMAL", "ELEVATED", "SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")
+CO2_EVIDENCE = ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")   # ELEVATED/NORMAL are info only
+PROFILES = ("DEMO", "FIELD")
 SOUND_KINDS = ("TAP", "VOICE")   # SOUND event (older nodes): knock vs. sustained voice
 BTN_STAGES = ("first", "confirmed")
 QUESTIONS = ("injured", "count")
@@ -16,7 +19,13 @@ MSG_MAX = 60  # node screen fits ~60 characters
 # Optional numeric fields: name -> type. Bad values are dropped, not fatal.
 _NUMERIC = {"co2": float, "base": float, "bat": float, "rssi": float,
             "dg": int, "taps": int, "calls": int,
-            "snd": int}   # loudest sound level since the last heartbeat (0..65535)
+            "snd": int,   # loudest sound level since the last heartbeat (0..65535)
+            "rh": float, "rh_base": float,          # humidity % now / baseline
+            "rise": float, "secs": int,             # CO2 event: sudden rise (ppm) in N seconds
+            "rh_jump": float,                       # CO2 event: humidity jump (points)
+            "hold": int}                            # seconds of CO2 evidence left
+# Optional text fields: name -> allowed values. Unknown values are dropped.
+_CHOICES = {"lvl": CO2_LEVELS, "prev": CO2_LEVELS, "prof": PROFILES}
 
 
 def _num(value, kind):
@@ -65,6 +74,9 @@ def parse_line(line):
             val = _num(raw[key], kind)
             if val is not None:
                 msg[key] = val
+    for key, allowed in _CHOICES.items():
+        if raw.get(key) in allowed:
+            msg[key] = raw[key]
 
     st = raw.get("st")
     if st is not None:
@@ -94,7 +106,29 @@ def parse_line(line):
             msg["k"] = k
         elif e == "BTN" and raw.get("stage") in BTN_STAGES:
             msg["stage"] = raw["stage"]
+        elif e == "CO2" and "lvl" not in msg:
+            return None, "CO2 event needs a known lvl"
     return msg, None
+
+
+def describe_co2(msg):
+    lvl, prev = msg["lvl"], msg.get("prev")
+    rise, secs, rh = int(msg.get("rise", 0)), int(msg.get("secs", 0)), int(msg.get("rh_jump", 0))
+    if lvl == "BREATHING":
+        return f"Breathing detected: CO2 +{rise} ppm, humidity +{rh}%"
+    if lvl == "SUDDEN_RISE":
+        return f"Sudden CO2 rise +{rise} ppm in {secs} s"
+    if lvl == "SLOW_BUILDUP":
+        return f"Slow CO2 build-up +{rise} ppm over {round(secs / 60)} min"
+    if prev in CO2_EVIDENCE:                       # ELEVATED / NORMAL after an event
+        return "CO2 evidence expired"
+    if lvl == "ELEVATED":
+        return "CO2 high but steady (room air?)"
+    if lvl == "NORMAL":
+        if prev in (None, "LEARNING"):
+            return "CO2 baseline learned" + (f": {msg['base']} ppm" if "base" in msg else "")
+        return "CO2 back to normal"
+    return "CO2 sensor learning the room's baseline"
 
 
 def sound_kind(msg):
@@ -166,6 +200,8 @@ def describe(msg, outgoing=False):
         return "survivor pressed the PRESS ME button"
     if e == "STUCK":
         return "Button held down — possible debris"
+    if e == "CO2":
+        return describe_co2(msg)
     kind = sound_kind(msg)
     if kind:
         return "heard knocking" if kind == "TAP" else "heard a voice"

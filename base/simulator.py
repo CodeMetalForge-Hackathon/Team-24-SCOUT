@@ -1,14 +1,16 @@
 """Fake nodes for demos and development without hardware.
 
-Each fake node runs the REAL node brain (firmware/node/assess.py), so statuses,
-reasons and countdowns are exactly what the board would send.
+Each fake node runs the REAL node logic (firmware/node/assess.py and co2logic.py,
+DEMO profile), so statuses, reasons, CO2 levels and countdowns are exactly what
+the board would send. Only the raw sensor values are invented.
 
-Node 1 plays a story on a loop (~120 s):
-  heard a voice -> POSSIBLE
-  ACCIDENTAL single press -> LIKELY countdown -> expires -> POSSIBLE "single press, not confirmed"
-  knocking -> POSSIBLE, CO2 creeps up
-  press -> LIKELY countdown -> 2nd press -> CONFIRMED (latched)
-  answers injured=yes, count=2 -> pile shift (DANGER) -> stuck button -> restart
+Node 1 plays a story on a loop (~6.5 min); the first 30 s it also learns its CO2 baseline:
+    6 s  heard a voice -> POSSIBLE
+   25 s  ACCIDENTAL single press -> LIKELY countdown -> expires -> "single press, not confirmed"
+   40 s  room CO2 drifts up (+2 ppm/s, people arriving) -> ELEVATED only, NO status change
+  175 s  breathing burst on the sensor -> BREATHING -> POSSIBLE -> expires after the 60 s hold
+  270 s  breathing again + knocking at 285 s -> LIKELY "breathing + knocking"
+  345 s  press, 353 s press again -> CONFIRMED (latched) -> answers -> pile shift -> stuck button
 Node 2 (optional) sits at NO SIGNS, to show several nodes at once.
 
 It reacts to dashboard commands like a real node:
@@ -25,35 +27,49 @@ import random
 import threading
 import time
 
-from base.node_brain import load_assess
+from base.node_brain import load_assess, load_co2logic
 from base.sources import Source
 
 log = logging.getLogger("base.sim")
 assess = load_assess()
+co2logic = load_co2logic()
 
+PROFILE = "DEMO"
 CONFIRM_WINDOW = 20
 ACTIVITY_WINDOW = 15
-ST_MIN_INTERVAL = 5      # same throttle as the node: countdown ST lines every 5 s
+COMBINE_WINDOW = 120
+ST_MIN_INTERVAL = 5      # same throttle as the node: reason-only ST lines every 5 s
+CO2_EVERY = 5            # the SCD41 makes a reading every ~5 s
+DEMO_CO2 = dict(baseline_secs=30, rate_window=15, sudden_ppm=120, event_hold=60,
+                rh_rise_points=3, follow=0.02, slow_enabled=False)   # = config.py DEMO
 
 
 class SimNode:
-    def __init__(self, n, co2, base, bat, rssi):
+    def __init__(self, n, co2, rh, bat, rssi):
         self.n = n
-        self.brain = assess.Assessor(activity_window=ACTIVITY_WINDOW, confirm_window=CONFIRM_WINDOW)
-        self.co2, self.co2_target, self.base = co2, co2, base
+        self.brain = assess.Assessor(activity_window=ACTIVITY_WINDOW, confirm_window=CONFIRM_WINDOW,
+                                     combine_window=COMBINE_WINDOW)
+        self.co2 = co2logic.CO2Levels(start=time.monotonic(), **DEMO_CO2)
+        self.room_ppm, self.room_rh = co2, rh
+        self.ppm, self.rh = co2, rh             # what the "air" is doing right now
+        self.ppm_target, self.rh_target = co2, rh
+        self.k = 0.05                           # how fast ppm/rh approach their targets (1/s)
+        self.ramp = 0.0                         # ppm/s added to the target (slow build-up)
+        self.last_lvl = None
         self.bat, self.rssi_mid = bat, rssi
         self.calls = 0
         self.last_st = (None, None)
         self.last_st_time = -100
 
     def drift(self, dt):
-        # CO2 ramps ~10 ppm/s toward its target, with a little sensor noise
-        step = 10 * dt
-        if abs(self.co2_target - self.co2) <= step:
-            self.co2 = self.co2_target
-        else:
-            self.co2 += step if self.co2_target > self.co2 else -step
+        self.ppm_target += self.ramp * dt
+        f = min(1.0, self.k * dt)
+        self.ppm += (self.ppm_target - self.ppm) * f
+        self.rh += (self.rh_target - self.rh) * f
         self.bat = max(5, self.bat - 0.002 * dt)
+
+    def back_to_room(self, k=0.04):
+        self.ppm_target, self.rh_target, self.ramp, self.k = self.room_ppm, self.room_rh, 0.0, k
 
     def rssi(self):
         return int(self.rssi_mid + random.uniform(-4, 4))
@@ -61,12 +77,12 @@ class SimNode:
 
 class SimSource(Source):
     name = "sim"
-    CYCLE = 120
+    CYCLE = 400
 
     def __init__(self, second_node=True):
         super().__init__()
-        self.n1 = SimNode(1, co2=650, base=640, bat=87, rssi=-48)
-        self.n2 = SimNode(2, co2=600, base=590, bat=64, rssi=-71) if second_node else None
+        self.n1 = SimNode(1, co2=810, rh=48.0, bat=87, rssi=-48)
+        self.n2 = SimNode(2, co2=600, rh=45.0, bat=64, rssi=-71) if second_node else None
         self._heap = []
         self._seq = itertools.count()
         self._lock = threading.Lock()
@@ -87,12 +103,34 @@ class SimSource(Source):
 
     def heartbeat(self, node, now):
         st, why = node.brain.evaluate(now)
-        self.emit(node, t="HB", st=st, why=why, co2=round(node.co2 + random.gauss(0, 4)),
-                  base=node.base, bat=round(node.bat), dg=int(node.brain.danger))
+        hb = dict(t="HB", st=st, why=why, bat=round(node.bat), dg=int(node.brain.danger), prof=PROFILE)
+        c = node.co2
+        if c.ppm is not None:
+            hb.update(co2=round(c.ppm), rh=round(c.rh, 1), lvl=c.level)
+            if c.hold_left(now):
+                hb["hold"] = int(c.hold_left(now))
+            if c.baseline is not None:
+                hb.update(base=int(c.baseline), rh_base=round(c.rh_baseline, 1))
+        self.emit(node, **hb)
+
+    def co2_reading(self, node, now):
+        """Like code.py: feed a reading, tell the brain, send EV CO2 on a level change."""
+        c = node.co2
+        c.feed(now, round(node.ppm + random.gauss(0, 4)), round(node.rh + random.gauss(0, 0.2), 1))
+        node.brain.set_co2(c.level, c.rise, c.rise_secs, c.rh_jump, now)
+        if c.level != node.last_lvl:
+            ev = dict(t="EV", e="CO2", lvl=c.level, prev=node.last_lvl)
+            if c.level in co2logic.EVIDENCE:
+                ev.update(rise=int(c.rise), secs=c.rise_secs, rh_jump=int(c.rh_jump),
+                          hold=int(c.hold_left(now)))
+            if c.baseline is not None:
+                ev["base"] = int(c.baseline)
+            self.emit(node, **ev)
+            node.last_lvl = c.level
 
     def report_status(self, node, now):
         """Same rule as code.py: status change -> send now; reason-only change
-        (the countdown ticking) -> at most every ST_MIN_INTERVAL s."""
+        (countdown ticking, CO2 delta moving) -> at most every ST_MIN_INTERVAL s."""
         st, why = node.brain.evaluate(now)
         if st != node.last_st[0] or (why != node.last_st[1]
                                      and now - node.last_st_time >= ST_MIN_INTERVAL):
@@ -112,12 +150,18 @@ class SimSource(Source):
         n = self.n1
 
         def reset():
-            n.brain.reset()
-            n.co2_target, n.calls = 650, 0
+            n.brain.reset()                     # CO2 baseline is kept, like the real node
+            n.back_to_room(k=0.1)
+            n.calls = 0
 
-        def knock():
-            n.co2_target = 1000
-            self.sound(n, "TAP")
+        def breathe():                          # measured: +150 in 5 s, peak +460, RH +6
+            n.ppm_target, n.rh_target, n.k = n.room_ppm + 460, n.room_rh + 6, 0.15
+
+        def room_drift():
+            n.k, n.ramp = 0.2, 2.0               # +2 ppm/s: people filling the room, not a breath
+
+        def drift_stops():
+            n.ramp = 0.0                         # room stays high (ELEVATED), flat
 
         def shift():
             n.brain.set_danger(True)
@@ -132,15 +176,22 @@ class SimSource(Source):
             (0, reset),
             (6, lambda: self.sound(n, "VOICE")),
             (25, lambda: self.press(n)),           # accidental single press -> expires at 45
-            (63, knock),
-            (70, lambda: self.press(n)),           # real survivor: 1st press...
-            (78, lambda: self.press(n)),           # ...2nd press -> CONFIRMED
-            (84, lambda: self.emit(n, t="EV", e="ANS", q="injured", a="yes")),
-            (90, lambda: self.emit(n, t="EV", e="ANS", q="count", a=2)),
-            (96, shift),
-            (102, lambda: self.emit(n, t="EV", e="STUCK")),
-            (108, settle),
-            (115, lambda: self.on_line("RX: crc error, packet dropped")),  # real receivers do this
+            (40, room_drift),                      # (b) slow room drift -> ELEVATED only
+            (130, drift_stops),
+            (150, lambda: n.back_to_room(k=0.03)), # room aired out
+            (175, breathe),                        # (a) breathing burst -> BREATHING ~10 s later
+            (200, n.back_to_room),                 #     stops; evidence expires after the hold
+            (270, breathe),                        # (c) breathing again...
+            (285, lambda: self.sound(n, "TAP")),   #     ...+ knocking -> LIKELY
+            (295, n.back_to_room),
+            (345, lambda: self.press(n)),          # real survivor: 1st press...
+            (353, lambda: self.press(n)),          # ...2nd press -> CONFIRMED
+            (359, lambda: self.emit(n, t="EV", e="ANS", q="injured", a="yes")),
+            (364, lambda: self.emit(n, t="EV", e="ANS", q="count", a=2)),
+            (370, shift),
+            (376, lambda: self.emit(n, t="EV", e="STUCK")),
+            (382, settle),
+            (390, lambda: self.on_line("RX: crc error, packet dropped")),  # real receivers do this
         ]
 
     # ---------- dashboard commands ----------
@@ -181,6 +232,7 @@ class SimSource(Source):
         start = last = time.monotonic()
         idx = 0
         next_hb = {1: start + 1, 2: start + 2}
+        next_co2 = {1: start + CO2_EVERY, 2: start + CO2_EVERY + 1}
         while not self._stop.is_set():
             now = time.monotonic()
             dt, last = now - last, now
@@ -201,6 +253,9 @@ class SimSource(Source):
 
                 for node in self.nodes():
                     node.drift(dt)
+                    if now >= next_co2[node.n]:
+                        self.co2_reading(node, now)
+                        next_co2[node.n] = now + CO2_EVERY
                     self.report_status(node, now)
                     if now >= next_hb[node.n]:
                         self.heartbeat(node, now)

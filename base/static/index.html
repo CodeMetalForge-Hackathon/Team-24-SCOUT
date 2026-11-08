@@ -76,6 +76,20 @@
   .yes { color: var(--s-unresp); } .no { color: var(--s-confirmed); } .unk { color: var(--muted); }
 
   .chart-wrap { background: var(--panel2); border-radius: 10px; padding: 8px 10px 4px; }
+  .co2row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 6px 0 2px; }
+  .lvl { font-weight: 800; font-size: 15px; padding: 3px 10px; border-radius: 999px;
+    letter-spacing: .03em; background: #3a414a; color: #e6eaee; }
+  .lvl.LEARNING { background: #3a414a; color: #c9d1da; }
+  .lvl.NORMAL { background: #2f3740; color: #d7dde3; }
+  .lvl.ELEVATED { background: #b9c1ca; color: #1a1f24; }
+  .lvl.SUDDEN_RISE, .lvl.BREATHING, .lvl.SLOW_BUILDUP { background: var(--s-possible); color: #111; }
+  .holdtext { color: var(--s-possible); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .lvl.BREATHING { box-shadow: 0 0 0 3px rgba(255, 140, 26, .35); }
+  .rhtext { color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .prof { font-weight: 800; padding: 6px 10px; border-radius: 6px; border: 2px solid var(--muted);
+    color: var(--text); white-space: nowrap; }
+  .prof.FIELD { border-color: var(--s-confirmed); }
+  .prof[hidden] { display: none; }
   .chart-wrap .k { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
     display: flex; justify-content: space-between; }
   canvas { width: 100%; height: 150px; display: block; }
@@ -140,6 +154,7 @@
 <body>
 <header>
   <span class="offline">OFFLINE MODE: LoRa only</span>
+  <span id="profBadge" class="prof" hidden title="Sensor tuning profile reported by the nodes"></span>
   <h1>Rubble Survivor Nodes</h1>
   <button id="alertsBtn" class="btn" title="Browsers only play sound after you click once">🔔 Enable alert sound</button>
   <span class="conn" title="Receiver / simulator feeding this base station"><span id="srcDot" class="dot"></span><span id="srcText">Receiver: ?</span></span>
@@ -175,7 +190,12 @@
       <div class="stat sound"><div class="k">Last sound</div><div class="v" data-r="sound">none</div><div class="s" data-r="soundS"></div></div>
     </div>
     <div class="chart-wrap">
-      <div class="k"><span>CO₂, last 10 min</span><span>- - baseline</span></div>
+      <div class="k"><span>CO₂, last 10 min</span><span>- - baseline · ▮ sudden rise</span></div>
+      <div class="co2row">
+        <span class="lvl" data-r="lvl">no CO₂ sensor</span>
+        <span class="rhtext" data-r="rhtext"></span>
+        <span class="holdtext" data-r="hold"></span>
+      </div>
       <canvas data-r="chart"></canvas>
     </div>
     <div class="controls">
@@ -201,6 +221,13 @@
 
 <script>
 "use strict";
+// CO2 (must match firmware/node/config.py profiles)
+// Only a SUDDEN rise is evidence; ELEVATED (high but flat) is room air, info only.
+const CO2_EVIDENCE = ["SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP"];
+const LVL_TEXT = { LEARNING: "learning baseline", NORMAL: "normal", ELEVATED: "high, not rising",
+  SUDDEN_RISE: "sudden rise", BREATHING: "breathing detected", SLOW_BUILDUP: "slow build-up" };
+const LVL_DOT = { LEARNING: "#6b7480", NORMAL: "#6b7480", ELEVATED: "#b9c1ca",
+  SUDDEN_RISE: "#ff8c1a", BREATHING: "#ff8c1a", SLOW_BUILDUP: "#ff8c1a" };
 const STATUS_COLOR = { "NO SIGNS": "#6b7480", POSSIBLE: "#ff8c1a", LIKELY: "#ffd51a",
   CONFIRMED: "#22c55e", UNRESPONSIVE: "#ff3b3b", LOST: "#3a414a" };
 const LOST_AFTER = 90;
@@ -295,8 +322,20 @@ function render(nd) {
     if (nd.base != null) {
       const d = Math.round(nd.co2 - nd.base);
       r.co2d.textContent = `base ${Math.round(nd.base)} (${d >= 0 ? "+" : ""}${d})`;
-      r.co2d.className = "s" + (d > 200 ? " warn" : "");
+      r.co2d.className = "s" + (CO2_EVIDENCE.includes(nd.lvl) ? " warn" : "");
     }
+  }
+  updateProfile();
+  if (nd.lvl) {
+    r.lvl.className = `lvl ${nd.lvl}`;
+    r.lvl.textContent = LVL_TEXT[nd.lvl] || nd.lvl;
+  }
+  const holdLeft = nd.hold_until && !lost ? Math.round(nd.hold_until - now) : 0;
+  r.hold.textContent = holdLeft > 0 ? `evidence expires in ${holdLeft} s` : "";
+  if (nd.rh != null) {
+    const drh = nd.rh_base != null ? nd.rh - nd.rh_base : null;
+    r.rhtext.textContent = `Humidity ${Math.round(nd.rh)}%` + (drh != null
+      ? ` · base ${Math.round(nd.rh_base)}% (${drh >= 0 ? "+" : ""}${drh.toFixed(1)})` : "");
   }
   const inj = nd.answers?.injured;
   r.injured.textContent = inj == null ? "unknown" : inj.toUpperCase();
@@ -309,6 +348,14 @@ function render(nd) {
   r.sound.className = "v " + (!ls ? "unk" : now - ls.ts < 15 ? "heard" : "");
   r.soundS.textContent = (ls ? ago(now - ls.ts) : "") + (nd.snd != null ? `${ls ? " · " : ""}level ${nd.snd}` : "");
   drawChart(r.chart, nd);
+}
+
+function updateProfile() {
+  const profs = [...new Set([...nodes.values()].map((nd) => nd.prof).filter(Boolean))].sort();
+  const b = $("profBadge");
+  b.hidden = !profs.length;
+  b.textContent = profs.length ? `${profs.join(" / ")} profile` : "";
+  b.className = "prof " + (profs.length === 1 ? profs[0] : "");
 }
 
 // ---------- CO2 chart (plain canvas) ----------
@@ -330,6 +377,7 @@ function drawChart(cv, nd) {
   g.textAlign = "right"; g.fillText("now", right, h - 3);
   if (!pts.length) { g.textAlign = "center"; g.fillText("no CO₂ data yet", (left + right) / 2, h / 2); return; }
 
+  const base = pts[pts.length - 1][2];
   const vals = pts.flatMap((p) => (p[2] != null ? [p[1], p[2]] : [p[1]]));
   let lo = Math.min(...vals), hi = Math.max(...vals);
   const padY = Math.max(40, (hi - lo) * 0.15);
@@ -345,9 +393,14 @@ function drawChart(cv, nd) {
   }
   g.textBaseline = "alphabetic";
 
-  const base = pts[pts.length - 1][2];
+  // shaded band where each sudden rise happened (from its start to when it was detected)
+  g.fillStyle = "rgba(255, 140, 26, 0.28)";
+  for (const [a, b] of nd.co2_marks || []) {
+    const x0 = Math.max(left, X(a)), x1 = Math.min(right, X(b) + 3);
+    if (x1 > left && x0 < right) g.fillRect(x0, top, Math.max(3, x1 - x0), bottom - top);
+  }
   if (base != null) {
-    g.setLineDash([6, 5]); g.strokeStyle = "#a3afbc"; g.lineWidth = 1.5;
+    g.setLineDash([6, 5]); g.strokeStyle = "#a3afbc"; g.lineWidth = 1.5;      // baseline: dashed
     g.beginPath(); g.moveTo(left, Y(base)); g.lineTo(right, Y(base)); g.stroke();
     g.setLineDash([]);
   }
@@ -373,7 +426,8 @@ function addEvent(ev, isNew) {
   if (!ev.out) {
     const st = /status is now (NO SIGNS|POSSIBLE|LIKELY|CONFIRMED|UNRESPONSIVE)/.exec(ev.desc);
     const heard = ev.e === "SOUND" || ev.e === "VOICE" || (ev.e === "TAP" && /knocking/.test(ev.desc));
-    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : heard ? "#ff8c1a"
+    const co2 = ev.e === "CO2" ? LVL_DOT[ev.lvl] || "#a3afbc" : null;
+    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : heard ? "#ff8c1a" : co2 ? co2
       : ev.stage === "first" ? STATUS_COLOR.LIKELY : ev.stage === "confirmed" ? STATUS_COLOR.CONFIRMED
       : st ? STATUS_COLOR[st[1]] : "#a3afbc";
     if (ev.stage) li.classList.add(ev.stage);              // "first" (yellow) / "confirmed" (green)
