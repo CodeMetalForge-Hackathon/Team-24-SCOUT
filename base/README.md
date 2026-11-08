@@ -247,6 +247,19 @@ an acknowledgement, a team assignment or a note made on one screen appears on al
 
 Use the ☀/☾ button to switch between day and night mode.
 
+### Resetting a node
+
+| Level | Where | What the node does | What the dashboard clears | Kept |
+|---|---|---|---|---|
+| **Clear status** (`RESET`) | detail panel → Reset node… | forgets evidence and counters, stops beeping, NO SIGNS "status cleared by base" | nothing | everything, incl. history |
+| **Full reset** (`REBOOT`) | detail panel → Reset node… (type RESET) | restarts: arming, CO₂ baseline re-learned, BOOT | that node's timeline, chart, alerts + acks, messages, manual location; team / notes / tag unless ticked | GPS last fix if ticked (default on); one audit line |
+| **New incident** | top bar ☰ → New incident… (type RESET) | every node restarts | everything (all nodes, alerts, teams, notes, tags) | base location; one audit line |
+
+Before anything is deleted it is **archived** to `base/archive/<incident>_<node1|all>_<date-time>.json` and `.csv`
+(not committed to git). The live log keeps one audit line, e.g. *"Node 1 fully reset by Ana at 00:12
+(archived: …)"*. After a full reset the node shows ↻ RESTARTING until its BOOT arrives; after 30 s without
+one: *"Reset sent, node not responding: check power"*.
+
 ## API
 
 | | |
