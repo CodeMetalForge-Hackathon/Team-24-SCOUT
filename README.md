@@ -1,4 +1,4 @@
-## Team 24 · Rescue Sensor Network
+## Team 24 · SCOUT — Search and Communication Observation Unit
 Deploy sensors. Monitor conditions. Send a signal back.
 
 An offline search-and-rescue prototype developed for the Code Metal Forge Hackathon · November 6–8, 2026.
