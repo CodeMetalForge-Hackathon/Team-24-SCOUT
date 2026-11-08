@@ -13,7 +13,6 @@ This is a hackathon prototype, not a validated rescue or life-safety instrument.
 
 ## Prototype Features
 
-The following capabilities are described in the team's development history. Hardware validation is tracked separately from software implementation.
 Area	Functionality
 CO₂ monitoring	Sensor support, time-based assessment logic, sudden-rise and hold-time rules, and DEMO/FIELD profiles
 Button interaction	Two-press confirmation, arming delay, and stuck-button protection
