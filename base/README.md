@@ -222,6 +222,13 @@ Look inside with `sqlite3 base/events.db "select * from events order by id desc 
 
 ## Tests
 
+Run on the laptop, no hardware needed (`pip install -r base/requirements.txt` installs pytest):
+
 ```bash
-python -m unittest discover base/tests
+python -m pytest tests/            # node decision logic: every status category (tests/test_logic.py)
+python -m pytest tests/ base/tests # + base station: parser, state, simulator helpers
 ```
+
+`tests/test_logic.py` imports the real node files (`firmware/node/assess.py`, `co2logic.py`,
+`caller.py`, `buttonlogic.py`): they are plain Python and take the time `now` as an argument,
+so the tests run them with a fake clock.

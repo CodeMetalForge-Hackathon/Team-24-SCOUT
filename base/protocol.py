@@ -34,6 +34,14 @@ _NUMERIC = {"co2": float, "base": float, "bat": float, "rssi": float,
 _CHOICES = {"lvl": CO2_LEVELS, "prev": CO2_LEVELS, "prof": PROFILES,
             "kind": SOUND_KINDS, "p": BEEPS, "call_state": CALL_STATES, "mic": ("on", "muted")}
 _BOOLS = ("on", "danger")                           # true / false fields
+# Short field names the node uses to keep LoRa packets small -> the names used here.
+# (Older nodes send the long names; both work.)
+_ALIASES = {"cs": "call_state", "ll": "listen_left", "nc": "next_call_in", "rhb": "rh_base"}
+# Evidence snapshot "ev" in ST / HB: why the node chose its status
+EV_CHOICES = {"btn": ("none", "first", "confirmed"), "snd": ("none", "TAP", "VOICE"),
+              "co2": CO2_LEVELS + ("NONE",)}
+EV_NUMBERS = ("resp", "miss", "dg")
+MSG_TYPES = ("HB", "ST", "EV", "SN")
 
 
 def _num(value, kind):
@@ -70,8 +78,11 @@ def parse_line(line):
         return None, "JSON is not an object"
 
     t = raw.get("t")
-    if t not in ("HB", "ST", "EV"):
+    if t not in MSG_TYPES:
         return None, f"unknown type {t!r}"
+    for short, long in _ALIASES.items():
+        if short in raw and long not in raw:
+            raw[long] = raw[short]
     n = _num(raw.get("n"), int)
     if n is None or n < 0:
         return None, "missing/bad node id 'n'"
@@ -88,6 +99,20 @@ def parse_line(line):
     for key in _BOOLS:
         if isinstance(raw.get(key), bool):
             msg[key] = raw[key]
+    if isinstance(raw.get("ev"), dict):
+        ev = {}
+        for key, allowed in EV_CHOICES.items():
+            if raw["ev"].get(key) in allowed:
+                ev[key] = raw["ev"][key]
+        for key in EV_NUMBERS:
+            val = _num(raw["ev"].get(key), int)
+            if val is not None:
+                ev[key] = val
+        msg["ev"] = ev
+        if "miss" in ev:
+            msg.setdefault("calls_unanswered", ev["miss"])
+        if "dg" in ev:
+            msg.setdefault("danger", bool(ev["dg"]))
 
     st = raw.get("st")
     if st is not None:
@@ -211,6 +236,8 @@ def describe(msg, outgoing=False):
         return f"Rescuer sent {t}"
     if t == "HB":
         return f"heartbeat ({msg.get('st', '?')})"
+    if t == "SN":
+        return "sensor readings"
     if t == "ST":
         why = msg.get("why")
         if msg["st"] == "UNRESPONSIVE" and why:

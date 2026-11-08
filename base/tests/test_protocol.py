@@ -192,3 +192,26 @@ class BootMessage(unittest.TestCase):
         self.assertIsNone(err)
         self.assertNotIn("laser", msg["sensors"])          # unknown parts ignored
         self.assertEqual(describe(msg), "Node started (missing: gps)")
+
+
+class CompactMessages(unittest.TestCase):
+    def test_short_heartbeat_with_evidence(self):
+        msg, err = parse_line('{"t":"HB","n":1,"st":"UNRESPONSIVE","ev":{"btn":"none","snd":"none",'
+                              '"co2":"BREATHING","resp":0,"miss":2,"dg":1,"zz":5},"cs":"LISTENING",'
+                              '"ll":4,"nc":0,"mic":"on","prof":"DEMO"}')
+        self.assertIsNone(err)
+        self.assertEqual(msg["ev"], {"btn": "none", "snd": "none", "co2": "BREATHING", "resp": 0,
+                                     "miss": 2, "dg": 1})
+        self.assertEqual((msg["call_state"], msg["listen_left"], msg["calls_unanswered"], msg["danger"]),
+                         ("LISTENING", 4, 2, True))
+
+    def test_sensor_message(self):
+        msg, err = parse_line('{"t":"SN","n":1,"co2":1127,"base":813,"rh":52.3,"rhb":48.1,'
+                              '"lvl":"BREATHING","hold":54,"snd":12000,"bat":87}')
+        self.assertIsNone(err)
+        self.assertEqual((msg["co2"], msg["rh_base"], msg["bat"], msg["lvl"]), (1127, 48.1, 87, "BREATHING"))
+        self.assertEqual(describe(msg), "sensor readings")
+
+    def test_bad_evidence_values_dropped(self):
+        msg, _ = parse_line('{"t":"ST","n":1,"st":"POSSIBLE","ev":{"btn":"maybe","co2":"WEIRD","miss":"x"}}')
+        self.assertEqual(msg["ev"], {})

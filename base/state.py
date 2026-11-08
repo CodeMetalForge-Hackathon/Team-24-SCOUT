@@ -65,6 +65,7 @@ class Node:
         self.calls_unanswered = 0
         self.mic = None             # "on" / "muted" (from the last heartbeat)
         self.parts = None           # BOOT self-check: {"sound": True, "co2": False, ...}
+        self.ev = None              # evidence snapshot from the last ST/HB (why this status)
         self.events = deque(maxlen=NODE_EVENTS)
 
     def to_dict(self, now):
@@ -88,6 +89,7 @@ class Node:
             "call_state": self.call_state, "call_ts": self.call_ts,
             "listen_end": self.listen_end, "next_call_at": self.next_call_at,
             "calls_unanswered": self.calls_unanswered, "mic": self.mic, "parts": self.parts,
+            "ev": self.ev,
             "events": list(self.events),
         }
 
@@ -125,6 +127,8 @@ class State:
             nd.danger = msg["danger"]
         if "mic" in msg:
             nd.mic = msg["mic"]
+        if "ev" in msg:
+            nd.ev = msg["ev"]
         if "calls_unanswered" in msg:
             nd.calls_unanswered = msg["calls_unanswered"]
         if "call_state" in msg:                 # heartbeat: exact call-cycle state
@@ -180,7 +184,7 @@ class State:
             if kind:
                 nd.last_sound = {"k": kind, "ts": ts}
         quiet_beep = msg["t"] == "EV" and msg["e"] == "BEEP"   # always duplicates another entry
-        if msg["t"] == "HB" or tick or quiet_co2 or quiet_beep:
+        if msg["t"] in ("HB", "SN") or tick or quiet_co2 or quiet_beep:
             return None
         ev = make_event(msg, ts, ev_id=ev_id)
         nd.events.appendleft(ev)
