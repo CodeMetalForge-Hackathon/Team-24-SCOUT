@@ -9,7 +9,7 @@ HEARTBEAT_INTERVAL = 3 if DEMO_MODE else 30   # seconds between {"t":"HB"} repor
 
 # ---- turn sensors on/off ----
 ENABLE_VIBRATION = False     # set True once the vibration sensor is wired to 3V/GND/5
-ENABLE_SOUND = True
+ENABLE_SOUND = False
 
 # ---- PRESS ME: built-in D1 button + built-in red LED ----
 PIN_BUTTON     = board.D1
