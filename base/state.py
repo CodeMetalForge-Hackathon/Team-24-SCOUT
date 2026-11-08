@@ -11,7 +11,7 @@ from base.protocol import CO2_EVIDENCE, describe, sound_kind
 LOST_AFTER = 90          # seconds without any message -> node shown as LOST
 CO2_HISTORY_SECS = 600   # keep ~10 min of CO2 points for the chart
 RECENT_EVENTS = 200      # global timeline length kept in memory
-NODE_EVENTS = 20
+NODE_EVENTS = 60
 CALL_AUDIO = 2.4           # 3 call beeps (1.75 s) + mic tail, before listening starts
 LISTEN_SECS = 10
 CALL_INTERVAL = {"DEMO": 20, "FIELD": 60}   # must match firmware/node/config.py
@@ -25,10 +25,28 @@ def same_words(a, b):
     return NUMBERS.sub("#", a or "") == NUMBERS.sub("#", b or "")
 
 
+def category(msg, outgoing=False):
+    """Event-log filter group: alerts / comms (survivor communication) / sensors / system."""
+    t, e = msg.get("t"), msg.get("e")
+    if outgoing:
+        return {"CALL": "comms", "MSG": "comms", "ASK": "comms", "DANGER": "alerts"}.get(t, "system")
+    if t == "ST":                       # only the status changes a responder must act on
+        return "alerts" if msg.get("st") in ("UNRESPONSIVE", "CONFIRMED", "LIKELY") else "system"
+    if e in ("DANGER", "SHIFT"):
+        return "alerts"
+    if e == "BTN":
+        return "alerts" if msg.get("stage") == "confirmed" else "comms"
+    if e in ("CALL", "RESP", "NORESP", "ANS", "BEEP"):
+        return "comms"
+    if e == "BOOT":
+        return "system"
+    return "sensors"                    # CO2, TAP, VOICE, STUCK, LOC ...
+
+
 def make_event(msg, ts, outgoing=False, ev_id=None):
     """Timeline entry. HB is not interesting enough to show, so callers skip it."""
-    return {"id": ev_id, "ts": ts, "n": msg.get("n"), "t": msg.get("t"),
-            "e": msg.get("e"), "stage": msg.get("stage"),
+    return {"id": ev_id, "ts": ts, "n": msg.get("n"), "t": msg.get("t"), "cat": category(msg, outgoing),
+            "e": msg.get("e"), "stage": msg.get("stage"), "st": msg.get("st"),
             "lvl": msg.get("lvl") if msg.get("e") == "CO2" else None, "out": outgoing,
             "desc": describe(msg, outgoing)}
 
@@ -39,6 +57,7 @@ class Node:
         self.first_seen = ts
         self.last_seen = ts
         self.status = "NO SIGNS"
+        self.status_since = ts      # when the status last changed (triage: longest waiting first)
         self.why = ""
         self.why_ts = ts            # when 'why' arrived (lets the page tick a countdown)
         self.rssi = None
@@ -64,6 +83,10 @@ class Node:
         self.next_call_at = None    # when the next call is due
         self.calls_unanswered = 0
         self.mic = None             # "on" / "muted" (from the last heartbeat)
+        self.parts = None           # BOOT self-check: {"sound": True, "co2": False, ...}
+        self.ev = None              # evidence snapshot from the last ST/HB (why this status)
+        self.loc = None             # {"src","lat","lon","acc","age","sats","label"}
+        self.loc_ts = None          # when that LOC arrived (age grows from there)
         self.events = deque(maxlen=NODE_EVENTS)
 
     def to_dict(self, now):
@@ -72,6 +95,7 @@ class Node:
             "n": self.n,
             "status": "LOST" if lost else self.status,
             "last_status": self.status,     # what it said before going quiet
+            "status_since": self.status_since,
             "why": f"no message for {int(now - self.last_seen)} s" if lost else self.why,
             "why_ts": self.why_ts,
             "lost": lost,
@@ -86,7 +110,8 @@ class Node:
             "co2_marks": [[round(a, 1), round(b, 1)] for a, b in self.co2_marks],
             "call_state": self.call_state, "call_ts": self.call_ts,
             "listen_end": self.listen_end, "next_call_at": self.next_call_at,
-            "calls_unanswered": self.calls_unanswered, "mic": self.mic,
+            "calls_unanswered": self.calls_unanswered, "mic": self.mic, "parts": self.parts,
+            "ev": self.ev, "loc": self.loc, "loc_ts": self.loc_ts,
             "events": list(self.events),
         }
 
@@ -113,6 +138,8 @@ class State:
             if key in msg:
                 setattr(nd, key, msg[key])
         if "st" in msg:
+            if msg["st"] != nd.status:
+                nd.status_since = ts
             nd.status = msg["st"]
             # a heartbeat may omit 'why'; keep the previous reason in that case
             if "why" in msg or msg["t"] == "ST":
@@ -124,6 +151,8 @@ class State:
             nd.danger = msg["danger"]
         if "mic" in msg:
             nd.mic = msg["mic"]
+        if "ev" in msg:
+            nd.ev = msg["ev"]
         if "calls_unanswered" in msg:
             nd.calls_unanswered = msg["calls_unanswered"]
         if "call_state" in msg:                 # heartbeat: exact call-cycle state
@@ -163,6 +192,8 @@ class State:
                 nd.answers[msg["q"]] = msg["a"]
             elif msg["e"] == "DANGER":
                 nd.danger = msg["on"]
+            elif msg["e"] == "BOOT":
+                nd.parts = msg.get("sensors")
             elif msg["e"] == "CALL":
                 nd.call_state, nd.call_ts = "CALLING", ts
                 nd.listen_end = ts + CALL_AUDIO + LISTEN_SECS       # estimate until the next HB
@@ -176,11 +207,26 @@ class State:
             kind = sound_kind(msg)
             if kind:
                 nd.last_sound = {"k": kind, "ts": ts}
+        quiet_loc = False
+        if msg["t"] == "LOC":                   # timeline only when the source changes
+            prev = nd.loc["src"] if nd.loc else None
+            nd.loc = {k: msg[k] for k in ("src", "lat", "lon", "acc", "age", "sats", "label") if k in msg}
+            nd.loc_ts = ts
+            quiet_loc = msg["src"] == prev
         quiet_beep = msg["t"] == "EV" and msg["e"] == "BEEP"   # always duplicates another entry
-        if msg["t"] == "HB" or tick or quiet_co2 or quiet_beep:
+        if msg["t"] in ("HB", "SN") or tick or quiet_co2 or quiet_beep or quiet_loc:
             return None
         ev = make_event(msg, ts, ev_id=ev_id)
         nd.events.appendleft(ev)
+        self.events.appendleft(ev)
+        return ev
+
+    def add_note(self, n, desc, cat, ts, ev_id=None):
+        """A base-side timeline line (alert, acknowledgement, assignment, setting)."""
+        ev = {"id": ev_id, "ts": ts, "n": n, "t": "NOTE", "cat": cat, "e": None, "stage": None,
+              "st": None, "lvl": None, "out": False, "sys": True, "desc": desc}
+        if n in self.nodes:
+            self.nodes[n].events.appendleft(ev)
         self.events.appendleft(ev)
         return ev
 

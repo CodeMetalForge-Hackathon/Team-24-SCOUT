@@ -3,581 +3,859 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rubble Node Base</title>
-<!-- 100% offline: no CDNs, no web fonts, no external requests. -->
+<title>USAR Survivor Nodes</title>
+<!-- 100% offline: no CDNs, no web fonts, no map tiles, no external requests. -->
 <style>
-  :root {
-    --bg: #0b0d10; --panel: #151a20; --panel2: #1c232b; --line: #2b343e;
-    --text: #f2f5f8; --muted: #a3afbc; --blue: #4ea1ff;
-    --s-none: #6b7480; --s-possible: #ff8c1a; --s-likely: #ffd51a;
-    --s-confirmed: #22c55e; --s-unresp: #ff3b3b; --s-lost: #3a414a;
-    --danger: #ff3b3b;
+  :root, [data-theme="dark"] {
+    --bg: #0b0e12; --panel: #141920; --panel2: #1b222b; --line: #2c3540; --text: #eef2f6;
+    --muted: #9aa6b2; --blue: #5aa9ff; --focus: #8fc4ff;
+    --unresp: #ff3d3d; --confirmed: #25c45f; --likely: #ffd21a; --possible: #ff8a1f;
+    --none: #77828e; --lost: #4a525c; --danger: #ff3d3d;
+    --on-unresp: #fff; --on-confirmed: #04220f; --on-likely: #1d1600; --on-possible: #1d0d00;
+    --on-none: #fff; --on-lost: #e5e9ee;
+    --row-sel: #233041; --ok: #25c45f;
+  }
+  [data-theme="light"] {
+    --bg: #eef1f4; --panel: #ffffff; --panel2: #f3f5f8; --line: #cfd6de; --text: #111820;
+    --muted: #4f5b67; --blue: #0b63c9; --focus: #0b63c9;
+    --unresp: #c8102e; --confirmed: #0f7a35; --likely: #e0a800; --possible: #d65f00;
+    --none: #5f6b77; --lost: #3a424b; --danger: #c8102e;
+    --on-unresp: #fff; --on-confirmed: #fff; --on-likely: #1d1600; --on-possible: #fff;
+    --on-none: #fff; --on-lost: #fff;
+    --row-sel: #dce9f8; --ok: #0f7a35;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-  button, input { font: inherit; }
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  [hidden] { display: none !important; }
+  .muted { color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
-  /* ---------- top banner ---------- */
-  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px;
-    flex-wrap: wrap; padding: 10px 20px; background: #000; border-bottom: 2px solid var(--line); }
-  .offline { background: var(--blue); color: #001; font-weight: 800; padding: 6px 12px;
-    border-radius: 6px; letter-spacing: .02em; white-space: nowrap; }
-  header h1 { font-size: 20px; margin: 0; font-weight: 700; flex: 1; min-width: 160px; }
-  .conn { display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
-  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--s-none); flex: none; }
-  .dot.ok { background: var(--s-confirmed); box-shadow: 0 0 8px var(--s-confirmed); }
-  .dot.bad { background: var(--s-unresp); animation: blink 1s steps(2) infinite; }
-  #clock { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
-
-  /* ---------- layout ---------- */
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; padding: 20px; }
-  #nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr));
-    gap: 20px; align-content: start; }
-  #empty { color: var(--muted); font-size: 20px; padding: 40px 0; }
-
-  /* ---------- node card ---------- */
-  .card { background: var(--panel); border: 3px solid var(--line); border-radius: 14px;
-    padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-  .card.st-UNRESPONSIVE { border-color: var(--s-unresp); animation: pulse-border 1.2s ease-in-out infinite; }
-  .card-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .node-name { font-size: 26px; font-weight: 800; }
-  .pill { font-size: 30px; font-weight: 900; padding: 6px 18px; border-radius: 999px;
-    letter-spacing: .03em; color: #fff; background: var(--s-none); }
-  .pill.NO-SIGNS { background: var(--s-none); }
-  .pill.POSSIBLE { background: var(--s-possible); color: #111; }
-  .pill.LIKELY { background: var(--s-likely); color: #111; }
-  .pill.CONFIRMED { background: var(--s-confirmed); color: #04210f; }
-  .pill.UNRESPONSIVE { background: var(--s-unresp); animation: pulse 1s ease-in-out infinite; }
-  .pill.LOST { background: var(--s-lost); color: #cfd6de; border: 2px dashed #8a949f; }
-  .why { font-size: 20px; color: var(--text); }
-  .why .prev { color: var(--muted); font-size: 16px; display: block; }
-
-  .danger { display: none; background: repeating-linear-gradient(-45deg, #ffcc00 0 18px, #111 18px 36px);
-    border-radius: 10px; padding: 6px; }
-  .danger span { display: block; background: var(--danger); color: #fff; font-weight: 900;
-    font-size: 22px; text-align: center; padding: 10px; border-radius: 6px; }
-  .card.has-danger .danger { display: block; animation: pulse 1s ease-in-out infinite; }
-  .callrow { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; background: var(--panel2);
-    border-radius: 10px; padding: 10px 12px; font-size: 17px; }
-  .callrow .cs { font-weight: 800; font-variant-numeric: tabular-nums; }
-  .callrow .cs.active { color: var(--blue); }
-  .callrow .un { font-weight: 700; } .callrow .un.bad { color: var(--s-unresp); }
-  .callrow .mic { color: var(--muted); }
-  .btn.danger-btn { border-color: #b33; color: #ffb3b3; background: transparent; }
-  .btn.danger-btn.on { background: var(--s-unresp); color: #fff; border-color: var(--s-unresp); }
-
-  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-  .stat { background: var(--panel2); border-radius: 10px; padding: 8px 10px; min-width: 0; }
-  .stat .k { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
-  .stat .v { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; }
-  .stat .s { color: var(--muted); font-size: 14px; }
-  .warn { color: var(--s-possible) !important; }
-  .bad  { color: var(--s-unresp) !important; }
-
-  .survivor { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 10px; }
-  .survivor .sound { border-left-color: var(--s-possible); }
-  .heard { color: var(--s-possible); }
-  .survivor .stat { border-left: 5px solid var(--blue); }
-  .survivor .v { font-size: 26px; }
-  .yes { color: var(--s-unresp); } .no { color: var(--s-confirmed); } .unk { color: var(--muted); }
-
-  .chart-wrap { background: var(--panel2); border-radius: 10px; padding: 8px 10px 4px; }
-  .co2row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 6px 0 2px; }
-  .lvl { font-weight: 800; font-size: 15px; padding: 3px 10px; border-radius: 999px;
-    letter-spacing: .03em; background: #3a414a; color: #e6eaee; }
-  .lvl.LEARNING { background: #3a414a; color: #c9d1da; }
-  .lvl.NORMAL { background: #2f3740; color: #d7dde3; }
-  .lvl.ELEVATED { background: #b9c1ca; color: #1a1f24; }
-  .lvl.SUDDEN_RISE, .lvl.BREATHING, .lvl.SLOW_BUILDUP { background: var(--s-possible); color: #111; }
-  .holdtext { color: var(--s-possible); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
-  .lvl.BREATHING { box-shadow: 0 0 0 3px rgba(255, 140, 26, .35); }
-  .rhtext { color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }
-  .prof { font-weight: 800; padding: 6px 10px; border-radius: 6px; border: 2px solid var(--muted);
-    color: var(--text); white-space: nowrap; }
-  .prof.FIELD { border-color: var(--s-confirmed); }
-  .prof[hidden] { display: none; }
-  .chart-wrap .k { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
-    display: flex; justify-content: space-between; }
-  canvas { width: 100%; height: 150px; display: block; }
-
-  .controls { display: flex; flex-wrap: wrap; gap: 8px; }
-  .btn { min-height: 46px; padding: 8px 14px; border-radius: 10px; border: 2px solid var(--line);
-    background: #26303a; color: var(--text); font-weight: 700; cursor: pointer; }
+  /* ---------- buttons / inputs ---------- */
+  .btn { min-height: 40px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel2); font-weight: 650; cursor: pointer; white-space: nowrap; }
   .btn:hover { border-color: var(--blue); }
   .btn:disabled { opacity: .5; cursor: wait; }
-  .btn.primary { background: var(--blue); border-color: var(--blue); color: #001; }
-  .btn.preset { font-weight: 600; background: var(--panel2); }
-  .msg-row { display: flex; gap: 8px; }
-  .msg-row input { flex: 1; min-width: 0; min-height: 46px; padding: 8px 12px; border-radius: 10px;
-    border: 2px solid var(--line); background: #0f1318; color: var(--text); }
-  .msg-row input:focus, .btn:focus-visible { outline: 3px solid var(--blue); outline-offset: 1px; }
-  .msg-row input.err { border-color: var(--s-unresp); }
-  .feedback { min-height: 22px; font-weight: 600; color: var(--muted); }
-  .feedback.ok { color: var(--s-confirmed); } .feedback.err { color: var(--s-unresp); }
-  .count { color: var(--muted); font-size: 13px; align-self: center; font-variant-numeric: tabular-nums; }
+  .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn.warn { border-color: var(--danger); color: var(--danger); background: transparent; }
+  .btn.warn.on { background: var(--danger); color: #fff; }
+  .btn.small { min-height: 32px; padding: 3px 10px; font-size: 14px; }
+  input[type=text], input[type=number], textarea { background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 10px; min-height: 40px; width: 100%; }
+  input.err { border-color: var(--danger); }
+  .err-text { color: var(--danger); font-weight: 600; font-size: 14px; min-height: 18px; }
+  .ok-text { color: var(--ok); font-weight: 600; font-size: 14px; }
 
-  /* ---------- timeline ---------- */
-  aside { background: var(--panel); border: 2px solid var(--line); border-radius: 14px; padding: 14px;
-    align-self: start; position: sticky; top: 80px; max-height: calc(100vh - 100px); display: flex;
-    flex-direction: column; min-width: 0; }
-  aside h2 { margin: 0 0 10px; font-size: 20px; }
-  #timeline { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
-  #timeline li { display: grid; grid-template-columns: 12px auto 1fr; gap: 4px 10px; align-items: baseline;
-    padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 15px; }
-  #timeline li .tdot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); align-self: center; }
-  #timeline li time { color: var(--muted); font-variant-numeric: tabular-nums; }
-  #timeline li.out { color: #bcdcff; } #timeline li.out .tdot { background: var(--blue); }
-  #timeline li.new { animation: flash 1.5s ease-out; }
-  #timeline li.first { color: var(--s-likely); }
-  #timeline li.confirmed { background: rgba(34, 197, 94, .18); border-left: 5px solid var(--s-confirmed);
-    color: #b9f6cf; font-weight: 800; padding-left: 6px; }
-  #timeline li.stuck { color: var(--muted); font-style: italic; }
-  .btn.reset { background: transparent; border-color: #6b7480; color: var(--muted); font-weight: 600; }
-  .btn.reset:hover { border-color: var(--s-unresp); color: var(--text); }
-  #alertsBtn { min-height: 36px; padding: 4px 12px; }
-  #alertsBtn.on { display: none; }
+  /* ---------- top bar ---------- */
+  .topbar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center;
+    gap: 8px 10px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #incident { font-size: 19px; font-weight: 800; background: none; border: 1px dashed transparent; white-space: nowrap;
+    padding: 4px 6px; border-radius: 6px; cursor: text; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
+  #incident:hover { border-color: var(--line); }
+  .badge { font-weight: 800; font-size: 13px; letter-spacing: .04em; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid var(--line); white-space: nowrap; }
+  .badge.offline { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .summary { font-weight: 650; }
+  .summary b { color: var(--unresp); }
+  .spacer { flex: 1; }
+  .link { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--none); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--danger); }
+  #clock { font-size: 22px; font-weight: 800; }
+  #alertCount { font-weight: 800; }
+  #alertCount.hot { background: var(--unresp); color: #fff; border-color: var(--unresp); }
 
-  @keyframes pulse { 50% { opacity: .55; } }
-  @keyframes pulse-border { 50% { box-shadow: 0 0 0 6px rgba(255, 59, 59, .35); } }
-  @keyframes blink { 50% { opacity: .2; } }
-  @keyframes flash { from { background: rgba(78, 161, 255, .3); } to { background: transparent; } }
+  /* ---------- alert banner ---------- */
+  #banner { display: flex; flex-direction: column; gap: 6px; padding: 8px 16px; background: var(--panel);
+    border-bottom: 3px solid var(--unresp); }
+  .alert { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 12px; border-radius: 8px;
+    font-weight: 700; font-size: 17px; }
+  .alert.UNRESPONSIVE, .alert.DANGER { background: var(--unresp); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
+  .alert.CONFIRMED { background: var(--confirmed); color: var(--on-confirmed); }
+  .alert .when { font-weight: 500; opacity: .9; font-size: 14px; }
+  .alert .btn { margin-left: auto; background: #fff; color: #111; border-color: #fff; }
 
-  @media (max-width: 1000px) {
-    main { grid-template-columns: 1fr; }
-    aside { position: static; max-height: 60vh; }
-  }
-  @media (max-width: 560px) {
-    header { padding: 8px 12px; gap: 10px; } header h1 { display: none; }
-    #clock { font-size: 22px; }
-    main { padding: 12px; gap: 12px; }
-    .stats { grid-template-columns: 1fr 1fr; }
-    .survivor { grid-template-columns: 1fr 1fr; } .survivor .sound { grid-column: span 2; }
-    .pill { font-size: 24px; } .node-name { font-size: 22px; }
-  }
+  /* ---------- tabs ---------- */
+  .tabs { display: flex; gap: 4px; padding: 8px 16px 0; }
+  .tab { padding: 8px 16px; border: 1px solid var(--line); border-bottom: none; border-radius: 8px 8px 0 0;
+    background: var(--panel2); font-weight: 700; cursor: pointer; }
+  .tab[aria-selected="true"] { background: var(--panel); color: var(--blue); }
+  main { padding: 0 16px 16px; }
+  .view { background: var(--panel); border: 1px solid var(--line); border-radius: 0 10px 10px 10px; padding: 14px; }
+
+  /* ---------- status chips (color + icon + text, never color alone) ---------- */
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-weight: 850; letter-spacing: .02em;
+    padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .chip.big { font-size: 26px; padding: 4px 16px; }
+  .s-UNRESPONSIVE { background: var(--unresp); color: var(--on-unresp); }
+  .s-CONFIRMED { background: var(--confirmed); color: var(--on-confirmed); }
+  .s-LIKELY { background: var(--likely); color: var(--on-likely); }
+  .s-POSSIBLE { background: var(--possible); color: var(--on-possible); }
+  .s-NO-SIGNS { background: var(--none); color: var(--on-none); }
+  .s-LOST { background: var(--lost); color: var(--on-lost); border: 2px dashed var(--muted); }
+  .chip.s-UNRESPONSIVE { animation: pulse 1.2s ease-in-out infinite; }
+  .chip.danger { background: var(--danger); color: #fff; }
+  .loc { font-size: 13px; font-weight: 750; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--line); white-space: nowrap; }
+  .loc.LIVE { border-color: var(--ok); color: var(--ok); }
+  .loc.LAST { border-color: var(--possible); color: var(--possible); }
+  .loc.MANUAL { border-color: var(--blue); color: var(--blue); }
+  .loc.NONE { color: var(--muted); }
+
+  /* ---------- triage ---------- */
+  .triage-wrap { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(360px, 1fr); gap: 14px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+    padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  #triage tbody tr { cursor: pointer; }
+  #triage tbody tr:hover { background: var(--panel2); }
+  #triage tbody tr.sel { background: var(--row-sel); }
+  #triage tbody tr.s-row-UNRESPONSIVE td:first-child { border-left: 6px solid var(--unresp); }
+  #triage tbody tr.s-row-CONFIRMED td:first-child { border-left: 6px solid var(--confirmed); }
+  #triage tbody tr.s-row-LIKELY td:first-child { border-left: 6px solid var(--likely); }
+  #triage tbody tr.s-row-POSSIBLE td:first-child { border-left: 6px solid var(--possible); }
+  .nodeid { font-weight: 850; font-size: 18px; }
+  .tag { display: block; font-size: 13px; color: var(--muted); }
+  .why { font-size: 15px; }
+  .unacked { color: var(--unresp); font-weight: 800; }
+  .acked { color: var(--ok); font-size: 14px; }
+  #empty { padding: 30px; text-align: center; color: var(--muted); }
+
+  /* ---------- detail panel ---------- */
+  #detail { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--panel2);
+    align-self: start; position: sticky; top: 130px; max-height: calc(100vh - 150px); overflow-y: auto; }
+  #detail h2 { margin: 0; font-size: 24px; }
+  #detail h3 { margin: 18px 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .d-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .guidance { margin: 10px 0 4px; padding: 10px 12px; border-radius: 8px; background: var(--panel);
+    border-left: 6px solid var(--none); font-weight: 650; }
+  .guidance.danger { border-left-color: var(--danger); }
+  .reason { font-size: 18px; margin: 6px 0; }
+  ul.ev { list-style: none; padding: 0; margin: 0; }
+  ul.ev li { padding: 5px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 8px; }
+  ul.ev li .mk { width: 20px; flex: none; text-align: center; }
+  ul.ev li.on { font-weight: 750; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kv { background: var(--panel); border-radius: 8px; padding: 8px 10px; }
+  .kv .k { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .kv .v { font-size: 18px; font-weight: 750; }
+  canvas { width: 100%; display: block; }
+  #co2chart { height: 160px; background: var(--panel); border-radius: 8px; }
+  .comms { max-height: 180px; overflow-y: auto; font-size: 15px; }
+  .comms div { padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .comms .out { color: var(--blue); }
+  textarea { min-height: 70px; resize: vertical; }
+  .form { display: grid; gap: 6px; }
+
+  /* ---------- situation ---------- */
+  .situ { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; }
+  #radar { aspect-ratio: 1 / 1; max-height: calc(100vh - 220px); background: var(--panel2); border-radius: 10px; }
+  .situ-side .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .situ-side h3 { margin: 0 0 8px; font-size: 15px; }
+
+  /* ---------- event log ---------- */
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
+  .filters .btn[aria-pressed="true"] { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .cat { font-size: 12px; font-weight: 800; text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
+    border: 1px solid var(--line); color: var(--muted); }
+  .cat.alerts { border-color: var(--unresp); color: var(--unresp); }
+  .cat.comms { border-color: var(--blue); color: var(--blue); }
+  #log td { padding: 6px 8px; font-size: 15px; }
+
+  @keyframes pulse { 50% { opacity: .6; } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  @media (max-width: 1100px) {
+    .triage-wrap, .situ { grid-template-columns: 1fr; }
+    #detail { position: static; max-height: none; }
+    .hide-md { display: none; }
+  }
+  @media (max-width: 640px) {
+    .topbar { padding: 8px; } main { padding: 0 8px 8px; } .tabs { padding: 8px 8px 0; }
+    .hide-sm { display: none; } #clock { font-size: 18px; }
+    td { padding: 8px 4px; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <span class="offline">OFFLINE MODE: LoRa only</span>
-  <span id="profBadge" class="prof" hidden title="Sensor tuning profile reported by the nodes"></span>
-  <h1>Rubble Survivor Nodes</h1>
-  <button id="alertsBtn" class="btn" title="Browsers only play sound after you click once">🔔 Enable alert sound</button>
-  <span class="conn" title="Receiver / simulator feeding this base station"><span id="srcDot" class="dot"></span><span id="srcText">Receiver: ?</span></span>
-  <span class="conn" title="Live link between this page and the base station"><span id="wsDot" class="dot"></span><span id="wsText">Connecting…</span></span>
-  <span id="clock">--:--:--</span>
+<header class="topbar">
+  <button id="incident" title="Click to rename the incident">Incident</button>
+  <span class="badge offline" title="No internet needed: data comes over LoRa / USB only">OFFLINE</span>
+  <span id="profile" class="badge" hidden></span>
+  <span id="summary" class="summary"></span>
+  <button id="alertCount" class="badge btn small" title="Unacknowledged alerts">0 alerts</button>
+  <span class="spacer"></span>
+  <span class="link" title="Data link to the nodes"><span id="linkDot" class="dot"></span><span id="linkText">–</span></span>
+  <span class="link" id="wsBox" title="Live connection between this page and the base station"><span id="wsDot" class="dot"></span><span id="wsText" hidden></span></span>
+  <button id="operator" class="btn small" title="Your name, recorded when you acknowledge alerts">👤 set name</button>
+  <button id="sound" class="btn small" title="Alert sound on/off">🔇</button>
+  <button id="theme" class="btn small" title="Day / night mode">◐</button>
+  <span id="clock" class="num">--:--:--</span>
 </header>
 
-<main>
-  <section id="nodes"><div id="empty">Waiting for the first node to report…</div></section>
-  <aside>
-    <h2>Timeline</h2>
-    <ol id="timeline"></ol>
-  </aside>
-</main>
+<div id="banner" hidden></div>
 
-<template id="cardTpl">
-  <article class="card">
-    <div class="card-head">
-      <span class="node-name" data-r="name"></span>
-      <span class="pill" data-r="pill"></span>
-    </div>
-    <div class="why" data-r="why"></div>
-    <div class="danger"><span>⚠ DANGER: pile movement, clear the area</span></div>
-    <div class="callrow">
-      <span class="cs" data-r="callstate">📣 –</span>
-      <span class="un" data-r="unanswered">Unanswered calls: 0</span>
-      <span class="mic" data-r="mic"></span>
-    </div>
-    <div class="stats">
-      <div class="stat"><div class="k">Last heard</div><div class="v" data-r="seen">–</div></div>
-      <div class="stat"><div class="k">Signal</div><div class="v" data-r="rssi">–</div><div class="s" data-r="rssiQ"></div></div>
-      <div class="stat"><div class="k">Battery</div><div class="v" data-r="bat">–</div></div>
-      <div class="stat"><div class="k">CO₂ ppm</div><div class="v" data-r="co2">–</div><div class="s" data-r="co2d"></div></div>
-    </div>
-    <div class="survivor">
-      <div class="stat"><div class="k">Injured?</div><div class="v" data-r="injured">unknown</div></div>
-      <div class="stat"><div class="k">People</div><div class="v" data-r="people">unknown</div></div>
-      <div class="stat sound"><div class="k">Last sound</div><div class="v" data-r="sound">none</div><div class="s" data-r="soundS"></div></div>
-    </div>
-    <div class="chart-wrap">
-      <div class="k"><span>CO₂, last 10 min</span><span>- - baseline · ▮ sudden rise</span></div>
-      <div class="co2row">
-        <span class="lvl" data-r="lvl">no CO₂ sensor</span>
-        <span class="rhtext" data-r="rhtext"></span>
-        <span class="holdtext" data-r="hold"></span>
+<nav class="tabs" role="tablist">
+  <button class="tab" role="tab" data-view="triage" aria-selected="true">Triage</button>
+  <button class="tab" role="tab" data-view="situation" aria-selected="false">Situation</button>
+  <button class="tab" role="tab" data-view="log" aria-selected="false">Event log</button>
+</nav>
+
+<main>
+  <!-- ======================= TRIAGE ======================= -->
+  <section class="view" id="view-triage">
+    <div class="triage-wrap">
+      <div>
+        <table id="triage">
+          <thead><tr>
+            <th>Status</th><th>Node</th><th>Why</th><th class="hide-sm">Location</th>
+            <th>Heard</th><th class="hide-md">Battery</th><th class="hide-sm">Team</th><th>Alert</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <div id="empty">Waiting for the first node to report…</div>
       </div>
-      <canvas data-r="chart"></canvas>
+
+      <aside id="detail" hidden>
+        <div class="d-head">
+          <h2 id="dTitle">Node</h2>
+          <span id="dChip" class="chip big"></span>
+          <span id="dDanger" class="chip danger" hidden>⛔ DANGER</span>
+          <button id="dAck" class="btn primary" hidden>✓ Acknowledge alert</button>
+        </div>
+        <div id="dGuide" class="guidance"></div>
+        <div id="dDangerGuide" class="guidance danger" hidden></div>
+        <div id="dReason" class="reason"></div>
+        <div id="dSince" class="muted"></div>
+
+        <h3>Why this status: evidence</h3>
+        <ul class="ev" id="dEv"></ul>
+        <div class="row" style="margin-top:8px">
+          <span id="dCall" class="num"></span><span class="muted">·</span>
+          <span id="dMic"></span><span class="muted">·</span><span id="dParts" class="muted"></span>
+        </div>
+
+        <h3>CO₂</h3>
+        <div class="row" style="margin-bottom:6px">
+          <span id="dCo2" class="num"></span><span id="dRh" class="muted num"></span>
+          <span id="dHold" class="num" style="color:var(--possible);font-weight:700"></span>
+        </div>
+        <canvas id="co2chart"></canvas>
+        <div class="muted" style="font-size:13px">last 10 min · dashed = baseline · shaded = sudden rise</div>
+
+        <h3>Location</h3>
+        <div class="row"><span id="dLocSrc" class="loc NONE">NONE</span><span id="dLocAge" class="muted"></span></div>
+        <div class="grid2" style="margin-top:8px">
+          <div class="kv"><div class="k">Lat, lon</div><div class="v num" id="dLatLon">–</div></div>
+          <div class="kv"><div class="k">Accuracy (est.)</div><div class="v num" id="dAcc">–</div></div>
+          <div class="kv"><div class="k">From base</div><div class="v num" id="dDist">–</div></div>
+          <div class="kv"><div class="k">Satellites</div><div class="v num" id="dSats">–</div></div>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <button id="dCopy" class="btn small">Copy lat, lon</button><span id="dCopyMsg" class="ok-text"></span>
+        </div>
+        <details style="margin-top:8px">
+          <summary>Set location manually</summary>
+          <form id="fLoc" class="form" style="margin-top:6px">
+            <div class="grid2"><input id="fLat" type="text" inputmode="decimal" placeholder="Latitude e.g. 42.36031">
+              <input id="fLon" type="text" inputmode="decimal" placeholder="Longitude e.g. -71.05880"></div>
+            <input id="fLabel" type="text" maxlength="20" placeholder="Label e.g. Site B NE corner">
+            <div class="row"><button class="btn" type="submit">Send to node</button><span id="fLocMsg" class="err-text"></span></div>
+          </form>
+        </details>
+
+        <h3>Survivor comms</h3>
+        <div class="row">
+          <button class="btn primary" data-cmd="CALL">📣 Call now</button>
+          <button class="btn" data-msg="Help is coming. Stay still.">“Help is coming. Stay still.”</button>
+          <button class="btn" data-msg="Tap 3 times if you can hear us.">“Tap 3 times if you can hear us.”</button>
+        </div>
+        <form id="fMsg" class="row" style="margin-top:8px">
+          <input id="msgTxt" type="text" maxlength="60" placeholder="Message to node screen (max 60)" style="flex:1;min-width:180px">
+          <span id="msgCount" class="muted num">0/60</span><button class="btn" type="submit">Send</button>
+        </form>
+        <div id="msgErr" class="err-text"></div>
+        <div id="dComms" class="comms"></div>
+
+        <h3>Team</h3>
+        <div class="form">
+          <div class="row"><input id="fTeam" type="text" maxlength="30" placeholder="Assign team e.g. Team Alpha" style="flex:1">
+            <button id="bTeam" class="btn">Assign</button></div>
+          <div class="row"><input id="fTag" type="text" maxlength="30" placeholder="Site tag e.g. Sector B, east wall" style="flex:1">
+            <button id="bTag" class="btn">Save tag</button></div>
+          <textarea id="fNotes" maxlength="500" placeholder="Notes for the team"></textarea>
+          <div class="row"><button id="bNotes" class="btn">Save notes</button><span id="metaMsg" class="ok-text"></span></div>
+        </div>
+
+        <h3>Node controls</h3>
+        <div class="row">
+          <button id="bDanger" class="btn warn">⛔ Danger alarm ON (test)</button>
+          <button id="bReset" class="btn">↺ Reset node (false alarm)</button>
+        </div>
+        <div id="ctlMsg" class="err-text"></div>
+      </aside>
     </div>
-    <div class="controls">
-      <button class="btn primary" data-cmd="CALL">📣 Call now</button>
-      <button class="btn danger-btn" data-r="danger">⚠ Danger alarm ON (test)</button>
+  </section>
+
+  <!-- ======================= SITUATION ======================= -->
+  <section class="view" id="view-situation" hidden>
+    <div class="situ">
+      <canvas id="radar"></canvas>
+      <div class="situ-side">
+        <div class="card"><h3>Nodes on the plot</h3><div id="placed" class="muted">–</div></div>
+        <div class="card"><h3>No position</h3><div id="unplaced" class="muted">–</div></div>
+        <div class="card">
+          <h3>Base (command post) location</h3>
+          <form id="fBase" class="form">
+            <input id="bLat" type="text" inputmode="decimal" placeholder="Latitude">
+            <input id="bLon" type="text" inputmode="decimal" placeholder="Longitude">
+            <div class="row"><button class="btn" type="submit">Save</button><span id="bMsg" class="err-text"></span></div>
+          </form>
+          <div class="muted" style="font-size:13px;margin-top:6px">Distances and bearings are measured from here.
+            No map tiles: works fully offline.</div>
+        </div>
+      </div>
     </div>
-    <div class="controls">
-      <button class="btn preset" data-cmd="MSG" data-txt="Help is coming. Stay still.">“Help is coming. Stay still.”</button>
-      <button class="btn preset" data-cmd="MSG" data-txt="Tap 3 times if you can hear us.">“Tap 3 times if you can hear us.”</button>
+  </section>
+
+  <!-- ======================= EVENT LOG ======================= -->
+  <section class="view" id="view-log" hidden>
+    <div class="filters">
+      <button class="btn small" data-filter="all" aria-pressed="true">All</button>
+      <button class="btn small" data-filter="alerts" aria-pressed="false">Alerts</button>
+      <button class="btn small" data-filter="comms" aria-pressed="false">Survivor comms</button>
+      <button class="btn small" data-filter="sensors" aria-pressed="false">Sensors</button>
+      <button class="btn small" data-filter="system" aria-pressed="false">System</button>
+      <span class="spacer"></span>
+      <button id="expCsv" class="btn small">⬇ Export CSV</button>
+      <button id="expJson" class="btn small">⬇ Export JSON</button>
     </div>
-    <form class="msg-row" data-r="form" autocomplete="off">
-      <input data-r="txt" maxlength="60" placeholder="Message to node screen (max 60)" aria-label="Message to node screen">
-      <span class="count" data-r="count">0/60</span>
-      <button class="btn" type="submit">Send</button>
-    </form>
-    <div class="controls">
-      <button class="btn reset" data-r="reset">↺ Reset node (false alarm)</button>
-    </div>
-    <div class="feedback" data-r="fb" role="status"></div>
-  </article>
-</template>
+    <table id="log"><thead><tr><th>Time</th><th>Node</th><th>Type</th><th>What happened</th></tr></thead><tbody></tbody></table>
+  </section>
+</main>
 
 <script>
 "use strict";
-// CO2 (must match firmware/node/config.py profiles)
-const CALL_AUDIO = 2.4;   // 3 call beeps + mic tail before listening starts (firmware config)
-// Only a SUDDEN rise is evidence; ELEVATED (high but flat) is room air, info only.
-const CO2_EVIDENCE = ["SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP"];
-const LVL_TEXT = { LEARNING: "learning baseline", NORMAL: "normal", ELEVATED: "high, not rising",
-  SUDDEN_RISE: "sudden rise", BREATHING: "breathing detected", SLOW_BUILDUP: "slow build-up" };
-const LVL_DOT = { LEARNING: "#6b7480", NORMAL: "#6b7480", ELEVATED: "#b9c1ca",
-  SUDDEN_RISE: "#ff8c1a", BREATHING: "#ff8c1a", SLOW_BUILDUP: "#ff8c1a" };
-const STATUS_COLOR = { "NO SIGNS": "#6b7480", POSSIBLE: "#ff8c1a", LIKELY: "#ffd51a",
-  CONFIRMED: "#22c55e", UNRESPONSIVE: "#ff3b3b", LOST: "#3a414a" };
+// ======================= constants =======================
+const ORDER = ["UNRESPONSIVE", "CONFIRMED", "LIKELY", "POSSIBLE", "NO SIGNS", "LOST"];   // triage order
+const ICON = { UNRESPONSIVE: "⚠", CONFIRMED: "✔", LIKELY: "●", POSSIBLE: "◐", "NO SIGNS": "○", LOST: "✕" };
+const GUIDE = {
+  UNRESPONSIVE: "Breathing detected but no answer to calls: possible unconscious survivor. HIGH PRIORITY.",
+  CONFIRMED: "Conscious survivor in contact at this node. Dispatch extraction team.",
+  LIKELY: "Probable survivor responding. Attempt contact.",
+  POSSIBLE: "Weak sign of life. Investigate when able.",
+  "NO SIGNS": "No evidence yet.",
+  LOST: "Node silent: check battery or radio.",
+  DANGER: "Pile movement / danger alarm: clear the area.",
+};
 const LOST_AFTER = 90;
+const CALL_AUDIO = 2.4;            // node: 3 call beeps + mic tail before listening
+const CO2_EVIDENCE = ["SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP"];
+const CO2_TEXT = { LEARNING: "learning the room's baseline", NORMAL: "normal", ELEVATED: "high but steady (room air, not evidence)",
+  SUDDEN_RISE: "sudden rise", BREATHING: "breathing detected", SLOW_BUILDUP: "slow build-up", NONE: "no reading" };
+const ALERT_REPEAT = 30;           // seconds between alert sounds until acknowledged
 
-const nodes = new Map();     // n -> latest node data from server
-const cards = new Map();     // n -> { el, r: {refs} }
-const seenEvents = new Set();
-let serverOffset = 0;        // server clock - this browser's clock (other laptops may be off)
+// ======================= state =======================
+const nodes = new Map();           // n -> node dict from the server
+let events = [];                   // timeline (newest first)
+let alerts = [];
+let meta = {};                     // incident, base
+let nodeMeta = {};                 // n -> {team, notes, tag}
+let source = {};
+let lastRx = null;
+let serverOffset = 0;              // server clock - browser clock
+let selected = null;               // node number in the detail panel
+let filter = "all";
+let view = "triage";
 
 const $ = (id) => document.getElementById(id);
-const serverNow = () => Date.now() / 1000 + serverOffset;
+const now = () => Date.now() / 1000 + serverOffset;
 const pad = (x) => String(x).padStart(2, "0");
-const hms = (ts) => { const d = new Date((ts - serverOffset) * 1000);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const hms = (ts) => { const d = new Date((ts - serverOffset) * 1000); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const cls = (st) => st.replace(" ", "-");
 function ago(sec) {
-  sec = Math.max(0, Math.round(sec));
-  if (sec < 60) return `${sec}s ago`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s ago`;
-  return `${Math.floor(sec / 3600)}h ago`;
+  if (sec == null || sec < 0) return "unknown";
+  sec = Math.round(sec);
+  if (sec < 60) return `${sec} s ago`;
+  if (sec < 3600) return `${Math.floor(sec / 60)} min ago`;
+  return `${Math.floor(sec / 3600)} h ${Math.floor((sec % 3600) / 60)} min ago`;
+}
+function store(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
+function load(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+
+function statusOf(nd) { return now() - nd.last_seen > LOST_AFTER ? "LOST" : (nd.last_status || nd.status); }
+function unackedFor(n) { return alerts.filter((a) => a.n === n && !a.acked_at); }
+function lastAckFor(n) { return alerts.find((a) => a.n === n && a.acked_at); }
+
+// ======================= geometry (no map tiles) =======================
+function locNow(nd) {
+  const l = nd.loc;
+  if (!l || l.src === "NONE" || l.lat == null) return null;
+  const age = l.age >= 0 ? l.age + (now() - (nd.loc_ts || now())) : -1;
+  return { ...l, ageNow: l.src === "LIVE" ? 0 : age };
+}
+function distBearing(lat1, lon1, lat2, lon2) {
+  const k = 111320, dx = (lon2 - lon1) * k * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180), dy = (lat2 - lat1) * k;
+  const b = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+  return { d: Math.hypot(dx, dy), b, dx, dy };
+}
+const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+const fmtDist = (m) => m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(2)} km`;
+
+// ======================= top bar =======================
+function renderTop() {
+  const list = [...nodes.values()];
+  const attention = list.filter((nd) => ["UNRESPONSIVE", "CONFIRMED", "LIKELY", "LOST"].includes(statusOf(nd)) || nd.danger).length;
+  $("summary").innerHTML = `${list.length} node${list.length === 1 ? "" : "s"} · ` +
+    (attention ? `<b>${attention} need${attention === 1 ? "s" : ""} attention</b>` : "none need attention");
+  const un = alerts.filter((a) => !a.acked_at).length;
+  $("alertCount").textContent = `🔔 ${un} unacknowledged`;
+  $("alertCount").className = "badge btn small" + (un ? " hot" : "");
+  $("incident").textContent = meta.incident || "Unnamed incident";
+  const profs = [...new Set(list.map((nd) => nd.prof).filter(Boolean))];
+  $("profile").hidden = !profs.length;
+  $("profile").textContent = profs.join(" / ") + " profile";
+  const via = source.name === "sim" ? "Simulator" : source.connected ? "USB / LoRa receiver" : "Receiver offline";
+  const age = lastRx ? now() - lastRx : null;
+  $("linkText").textContent = `${via} · ${age == null ? "no packets yet" : ago(age)}`;
+  $("linkText").title = "Last packet from the nodes " + (age == null ? "never" : ago(age));
+  $("linkDot").className = "dot " + (source.connected && age != null && age < 60 ? "ok" : "bad");
 }
 
-// ---------- cards ----------
-function getCard(n) {
-  if (cards.has(n)) return cards.get(n);
-  $("empty")?.remove();
-  const el = $("cardTpl").content.firstElementChild.cloneNode(true);
-  const r = {};
-  el.querySelectorAll("[data-r]").forEach((x) => (r[x.dataset.r] = x));
-  r.name.textContent = `Node ${n}`;
-  el.querySelectorAll("button[data-cmd]").forEach((b) => b.addEventListener("click", () => {
-    const cmd = { t: b.dataset.cmd, n };
-    if (b.dataset.q) cmd.q = b.dataset.q;
-    if (b.dataset.txt) cmd.txt = b.dataset.txt;
-    send(cmd, b, r);
-  }));
-  r.txt.addEventListener("input", () => { r.count.textContent = `${r.txt.value.length}/60`; r.txt.classList.remove("err"); });
-  r.form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const txt = r.txt.value.trim();
-    if (!txt) { r.txt.classList.add("err"); feedback(r, "Type a message first.", "err"); r.txt.focus(); return; }
-    send({ t: "MSG", n, txt }, r.form.querySelector("button"), r, () => { r.txt.value = ""; r.count.textContent = "0/60"; });
-  });
-  r.danger.addEventListener("click", () => {
-    const on = !(nodes.get(n) || {}).danger;
-    send({ t: "DANGER", n, on }, r.danger, r);
-  });
-  r.reset.addEventListener("click", () => {
-    if (confirm(`Reset node ${n}? This clears its status and evidence (use for a false alarm).`)) {
-      send({ t: "RESET", n }, r.reset, r);
-    }
-  });
-  // keep cards ordered by node number
-  const after = [...cards.keys()].filter((k) => k > n).sort((a, b) => a - b)[0];
-  $("nodes").insertBefore(el, after !== undefined ? cards.get(after).el : null);
-  const card = { el, r };
-  cards.set(n, card);
-  return card;
+function renderBanner() {
+  const open = alerts.filter((a) => !a.acked_at).sort((a, b) => (a.kind === "CONFIRMED") - (b.kind === "CONFIRMED") || a.ts - b.ts);
+  const b = $("banner");
+  b.hidden = !open.length;
+  b.innerHTML = open.slice(0, 4).map((a) => `<div class="alert ${a.kind}">
+      <span>${a.kind === "CONFIRMED" ? "✔" : a.kind === "DANGER" ? "⛔" : "⚠"} ${esc(a.text)}</span>
+      <span class="when">${hms(a.ts)} · ${ago(now() - a.ts)}</span>
+      <button class="btn small" data-ack="${a.id}">✓ Acknowledge</button></div>`).join("") +
+    (open.length > 4 ? `<div class="muted">+ ${open.length - 4} more unacknowledged alerts (see Triage)</div>` : "");
 }
 
-function render(nd) {
-  const { el, r } = getCard(nd.n);
-  const now = serverNow();
-  const lost = now - nd.last_seen > LOST_AFTER;
-  const status = lost ? "LOST" : nd.last_status || nd.status;
-  el.className = `card st-${status.replace(" ", "-")}` + (nd.danger && !lost ? " has-danger" : "");
-  r.pill.className = `pill ${status.replace(" ", "-")}`;
-  r.pill.textContent = status;
+// ======================= triage list =======================
+function sortedNodes() {
+  return [...nodes.values()].sort((a, b) => {
+    const d = ORDER.indexOf(statusOf(a)) - ORDER.indexOf(statusOf(b));
+    return d || (a.status_since - b.status_since) || a.n - b.n;      // same status: waiting longest first
+  });
+}
+function locBadge(nd) {
+  const l = locNow(nd);
+  if (!l) return `<span class="loc NONE">NO POSITION</span>`;
+  const txt = l.src === "LIVE" ? "GPS LIVE" : l.src === "LAST" ? `LAST ${l.ageNow >= 0 ? ago(l.ageNow).replace(" ago", "") : "?"}` : "MANUAL";
+  return `<span class="loc ${l.src}">${txt}</span>`;
+}
+function renderTriage() {
+  const tb = $("triage").querySelector("tbody");
+  const list = sortedNodes();
+  $("empty").hidden = list.length > 0;
+  tb.innerHTML = list.map((nd) => {
+    const st = statusOf(nd), m = nodeMeta[nd.n] || {};
+    const un = unackedFor(nd.n), ack = lastAckFor(nd.n);
+    const alertCell = un.length ? `<span class="unacked">⚠ ${un.length} unacked</span>`
+      : ack ? `<span class="acked">✓ ${esc(ack.acked_by)} ${hms(ack.acked_at).slice(0, 5)}</span>` : `<span class="muted">–</span>`;
+    return `<tr data-n="${nd.n}" tabindex="0" class="s-row-${cls(st)}${nd.n === selected ? " sel" : ""}" title="${esc(GUIDE[st])}">
+      <td><span class="chip s-${cls(st)}">${ICON[st]} ${st}</span>${nd.danger && st !== "LOST" ? ` <span class="chip danger">⛔ DANGER</span>` : ""}</td>
+      <td><span class="nodeid">N${nd.n}</span>${m.tag ? `<span class="tag">${esc(m.tag)}</span>` : ""}</td>
+      <td class="why">${esc(st === "LOST" ? `silent for ${ago(now() - nd.last_seen).replace(" ago", "")} · was ${nd.last_status}` : nd.why)}</td>
+      <td class="hide-sm">${locBadge(nd)}</td>
+      <td class="num">${ago(now() - nd.last_seen)}</td>
+      <td class="hide-md num">${nd.bat != null ? Math.round(nd.bat) + "%" : "–"}</td>
+      <td class="hide-sm">${m.team ? esc(m.team) : `<span class="muted">unassigned</span>`}</td>
+      <td>${alertCell}</td></tr>`;
+  }).join("");
+  if (selected == null && list.length) select(list[0].n);
+}
 
-  // The node only sends the countdown every 5 s; tick it down locally in between.
+// ======================= detail panel =======================
+function select(n) {
+  selected = n;
+  const m = nodeMeta[n] || {};
+  $("fTeam").value = m.team || ""; $("fTag").value = m.tag || ""; $("fNotes").value = m.notes || "";
+  for (const id of ["msgErr", "metaMsg", "ctlMsg", "fLocMsg", "dCopyMsg"]) $(id).textContent = "";
+  $("detail").hidden = false;
+  renderTriage(); renderDetail();
+}
+
+function evidenceLines(nd) {
+  const ev = nd.ev || {}, st = statusOf(nd), out = [];
+  const add = (on, text) => out.push(`<li class="${on ? "on" : ""}"><span class="mk">${on ? "✓" : "·"}</span><span>${text}</span></li>`);
+  const btn = ev.btn || "none";
+  add(btn !== "none", btn === "confirmed" ? "Button pressed twice: survivor confirmed" :
+    btn === "first" ? "Button pressed once: waiting for the 2nd press" : "Button not pressed");
+  const snd = ev.snd || "none";
+  add(snd !== "none", snd === "TAP" ? "Knocking heard (unprompted, last 2 min)" : snd === "VOICE" ? "Voice heard (unprompted, last 2 min)" : "No unprompted sounds");
+  const co2 = ev.co2 || nd.lvl || "NONE";
+  add(CO2_EVIDENCE.includes(co2), `CO₂: ${CO2_TEXT[co2] || co2}`);
+  add(!!ev.resp, ev.resp ? "Answered a call recently" : "No recent answer to calls");
+  const miss = ev.miss ?? nd.calls_unanswered ?? 0;
+  // missed calls only count (towards UNRESPONSIVE) together with CO2 evidence
+  add(miss >= 2 && CO2_EVIDENCE.includes(co2), `Missed calls in a row: ${miss}` + (miss >= 2 && !CO2_EVIDENCE.includes(co2) ? " (no CO₂ sign, so not UNRESPONSIVE)" : ""));
+  add(!!nd.danger, nd.danger ? "Danger alarm ON (does not change the status)" : "No danger alarm");
+  if (st === "LOST") out.unshift(`<li class="on"><span class="mk">✕</span><span>No message for ${ago(now() - nd.last_seen).replace(" ago", "")}: node may be off or out of range</span></li>`);
+  if (!nd.ev) out.push(`<li><span class="mk"></span><span class="muted">(this node doesn't send an evidence snapshot)</span></li>`);
+  return out.join("");
+}
+
+function callText(nd) {
+  const st = statusOf(nd), t = now();
+  if (st === "LOST") return "📣 –";
+  if (st === "CONFIRMED") return "📣 Calls stopped (confirmed)";
+  if ((nd.ev && nd.ev.btn === "first") || /^pressed once/.test(nd.why || "")) return "📣 Calls paused (waiting for 2nd press)";
+  if (nd.call_state === "CALLING" && nd.call_ts && t - nd.call_ts < CALL_AUDIO) return "📣 Calling…";
+  if ((nd.call_state === "CALLING" || nd.call_state === "LISTENING") && nd.listen_end) {
+    const left = Math.round(nd.listen_end - t);
+    return left > 0 ? `👂 Listening ${left} s…` : "👂 Listening…";
+  }
+  if (nd.next_call_at) { const left = Math.round(nd.next_call_at - t); return left > 0 ? `📣 Next call in ${left} s` : "📣 Call due"; }
+  return "📣 –";
+}
+
+function renderDetail() {
+  const nd = nodes.get(selected);
+  if (!nd) { $("detail").hidden = true; return; }
+  const st = statusOf(nd), m = nodeMeta[nd.n] || {}, t = now();
+  $("dTitle").textContent = `Node ${nd.n}` + (m.tag ? ` · ${m.tag}` : "");
+  $("dChip").className = `chip big s-${cls(st)}`;
+  $("dChip").textContent = `${ICON[st]} ${st}`;
+  $("dDanger").hidden = !nd.danger;
+  $("dGuide").textContent = GUIDE[st];
+  $("dGuide").style.borderLeftColor = `var(--${{ UNRESPONSIVE: "unresp", CONFIRMED: "confirmed", LIKELY: "likely", POSSIBLE: "possible", "NO SIGNS": "none", LOST: "lost" }[st]})`;
+  $("dDangerGuide").hidden = !nd.danger;
+  $("dDangerGuide").textContent = "⛔ " + GUIDE.DANGER;
+  // a node's reason may contain a countdown that the node only sends every 5 s: tick it here
   let why = nd.why || "";
   const cd = /\((\d+)s\)$/.exec(why);
-  if (cd && nd.why_ts) why = why.replace(/\(\d+s\)$/, `(${Math.max(0, cd[1] - Math.floor(now - nd.why_ts))}s)`);
-  r.why.textContent = lost ? `No message for ${ago(now - nd.last_seen).replace(" ago", "")}` : why;
-  if (lost) {
-    const prev = document.createElement("span");
-    prev.className = "prev";
-    prev.textContent = `Last known: ${nd.last_status}${nd.why && !nd.lost ? ` (${nd.why})` : ""}`;
-    r.why.appendChild(prev);
-  }
+  if (cd && nd.why_ts) why = why.replace(/\(\d+s\)$/, `(${Math.max(0, cd[1] - Math.floor(t - nd.why_ts))}s)`);
+  $("dReason").textContent = st === "LOST" ? `Last status: ${nd.last_status}: ${why}` : why;
+  $("dSince").textContent = `${st === "LOST" ? "Last heard" : "Status since"} ${hms(st === "LOST" ? nd.last_seen : nd.status_since)}` +
+    ` · heard ${ago(t - nd.last_seen)}` + (nd.bat != null ? ` · battery ${Math.round(nd.bat)}%` : "");
+  $("dAck").hidden = !unackedFor(nd.n).length;
+  $("dEv").innerHTML = evidenceLines(nd);
+  $("dCall").textContent = callText(nd) + `  ·  unanswered: ${nd.calls_unanswered || 0}`;
+  const micMuted = (nd.call_state === "CALLING" && nd.call_ts && t - nd.call_ts < CALL_AUDIO) || (nd.mic === "muted" && t - nd.last_seen < 3);
+  $("dMic").textContent = nd.mic || micMuted ? `🎙 mic ${micMuted ? "muted" : "on"}` : "";
+  const missing = nd.parts ? Object.entries(nd.parts).filter(([, ok]) => !ok).map(([k]) => k) : [];
+  $("dParts").textContent = nd.parts ? (missing.length ? `missing: ${missing.join(", ")}` : "all parts OK") : "";
 
-  const since = now - nd.last_seen;
-  r.seen.textContent = ago(since);
-  r.seen.className = "v" + (lost ? " bad" : since > 35 ? " warn" : "");
+  // CO2
+  $("dCo2").textContent = nd.co2 != null ? `CO₂ ${Math.round(nd.co2)} ppm` + (nd.base != null ? ` (baseline ${Math.round(nd.base)})` : "") + ` · ${CO2_TEXT[nd.lvl] || "–"}` : "No CO₂ reading";
+  $("dRh").textContent = nd.rh != null ? `· humidity ${Math.round(nd.rh)}%` + (nd.rh_base != null ? ` (base ${Math.round(nd.rh_base)}%)` : "") : "";
+  const hold = nd.hold_until && st !== "LOST" ? Math.round(nd.hold_until - t) : 0;
+  $("dHold").textContent = hold > 0 ? `· evidence expires in ${hold} s` : "";
+  drawCo2($("co2chart"), nd);
 
-  if (nd.rssi != null) {
-    r.rssi.textContent = `${nd.rssi} dBm`;
-    const q = nd.rssi > -70 ? ["strong", ""] : nd.rssi > -100 ? ["ok", ""] : ["weak", "warn"];
-    r.rssiQ.textContent = q[0]; r.rssiQ.className = "s " + q[1];
-  }
-  if (nd.bat != null) {
-    r.bat.textContent = `${Math.round(nd.bat)}%`;
-    r.bat.className = "v" + (nd.bat < 15 ? " bad" : nd.bat < 30 ? " warn" : "");
-  }
-  if (nd.co2 != null) {
-    r.co2.textContent = Math.round(nd.co2);
-    if (nd.base != null) {
-      const d = Math.round(nd.co2 - nd.base);
-      r.co2d.textContent = `base ${Math.round(nd.base)} (${d >= 0 ? "+" : ""}${d})`;
-      r.co2d.className = "s" + (CO2_EVIDENCE.includes(nd.lvl) ? " warn" : "");
-    }
-  }
-  updateProfile();
+  // location
+  const l = locNow(nd);
+  $("dLocSrc").className = "loc " + (l ? l.src : "NONE");
+  $("dLocSrc").textContent = l ? { LIVE: "GPS LIVE", LAST: "LAST KNOWN", MANUAL: "MANUAL" }[l.src] : "NO POSITION";
+  $("dLocAge").textContent = !l ? "No GPS fix and no manual location" :
+    l.src === "LIVE" ? "live fix" : l.src === "LAST" ? (l.ageNow >= 0 ? `last fix ${ago(l.ageNow)}` : "last fix: age unknown (node restarted)")
+    : `set manually ${ago(l.ageNow)}` + (l.label ? ` · “${l.label}”` : "");
+  $("dLatLon").textContent = l ? `${l.lat.toFixed(5)}, ${l.lon.toFixed(5)}` : "–";
+  $("dAcc").textContent = l && l.acc != null ? `±${l.acc} m` : "–";
+  $("dSats").textContent = l && l.sats != null ? l.sats : "–";
+  if (l && meta.base) {
+    const g = distBearing(meta.base.lat, meta.base.lon, l.lat, l.lon);
+    $("dDist").textContent = `${fmtDist(g.d)} ${COMPASS[Math.round(g.b / 45) % 8]} (${Math.round(g.b)}°)`;
+  } else $("dDist").textContent = meta.base ? "–" : "set base location";
+  $("dCopy").disabled = !l;
 
-  // ---- call-and-listen cycle (exact from heartbeats, ticking locally in between) ----
-  const st = nd.last_status || nd.status;
-  let cs = "📣 –", active = false, calling = false;
-  if (lost) {
-    cs = "📣 –";
-  } else if (st === "CONFIRMED") {
-    cs = "📣 Calls stopped (confirmed)";
-  } else if (/^pressed once/.test(nd.why || "")) {
-    cs = "📣 Calls paused (waiting for 2nd press)";
-  } else if (nd.call_state === "CALLING" && nd.call_ts && now - nd.call_ts < CALL_AUDIO) {
-    cs = "📣 Calling…"; active = calling = true;
-  } else if ((nd.call_state === "CALLING" || nd.call_state === "LISTENING") && nd.listen_end) {
-    const left = Math.round(nd.listen_end - now);
-    cs = left > 0 ? `👂 Listening ${left} s…` : "👂 Listening…"; active = true;
-  } else if (nd.next_call_at) {
-    const left = Math.round(nd.next_call_at - now);
-    cs = left > 0 ? `📣 Next call in ${left} s` : "📣 Call due";
-  }
-  r.callstate.textContent = cs;
-  r.callstate.className = "cs" + (active ? " active" : "");
-  const un = nd.calls_unanswered || 0;
-  r.unanswered.textContent = `Unanswered calls: ${un}`;
-  r.unanswered.className = "un" + (un >= 2 ? " bad" : "");
-  // the node mutes its mic only for a few seconds while beeping: trust a "muted"
-  // heartbeat briefly, and estimate it during the call beeps
-  const mic = calling || (nd.mic === "muted" && now - nd.last_seen < 3) ? "muted" : nd.mic ? "on" : null;
-  r.mic.textContent = mic ? `🎙 mic ${mic}` : "";
-  r.danger.textContent = nd.danger ? "Turn danger alarm off" : "⚠ Danger alarm ON (test)";
-  r.danger.className = "btn danger-btn" + (nd.danger ? " on" : "");
+  // comms history: what we sent + what the survivor did
+  const comm = (nd.events || []).filter((e) => e.cat === "comms" || e.stage === "confirmed").slice(0, 30);
+  $("dComms").innerHTML = comm.length ? comm.map((e) => `<div class="${e.out ? "out" : ""}"><span class="muted num">${hms(e.ts)}</span> ${esc(e.desc)}</div>`).join("")
+    : `<div class="muted">No calls or messages yet.</div>`;
 
-  if (nd.lvl) {
-    r.lvl.className = `lvl ${nd.lvl}`;
-    r.lvl.textContent = LVL_TEXT[nd.lvl] || nd.lvl;
-  }
-  const holdLeft = nd.hold_until && !lost ? Math.round(nd.hold_until - now) : 0;
-  r.hold.textContent = holdLeft > 0 ? `evidence expires in ${holdLeft} s` : "";
-  if (nd.rh != null) {
-    const drh = nd.rh_base != null ? nd.rh - nd.rh_base : null;
-    r.rhtext.textContent = `Humidity ${Math.round(nd.rh)}%` + (drh != null
-      ? ` · base ${Math.round(nd.rh_base)}% (${drh >= 0 ? "+" : ""}${drh.toFixed(1)})` : "");
-  }
-  const inj = nd.answers?.injured;
-  r.injured.textContent = inj == null ? "unknown" : inj.toUpperCase();
-  r.injured.className = "v " + (inj == null ? "unk" : /^y/i.test(inj) ? "yes" : "no");
-  const cnt = nd.answers?.count;
-  r.people.textContent = cnt == null ? "unknown" : cnt;
-  r.people.className = "v " + (cnt == null ? "unk" : "");
-  const ls = nd.last_sound;
-  r.sound.textContent = ls ? (ls.k === "TAP" ? "KNOCKING" : "VOICE") : "none";
-  r.sound.className = "v " + (!ls ? "unk" : now - ls.ts < 15 ? "heard" : "");
-  r.soundS.textContent = (ls ? ago(now - ls.ts) : "") + (nd.snd != null ? `${ls ? " · " : ""}level ${nd.snd}` : "");
-  drawChart(r.chart, nd);
+  $("bDanger").textContent = nd.danger ? "Turn danger alarm off" : "⛔ Danger alarm ON (test)";
+  $("bDanger").className = "btn warn" + (nd.danger ? " on" : "");
 }
 
-function updateProfile() {
-  const profs = [...new Set([...nodes.values()].map((nd) => nd.prof).filter(Boolean))].sort();
-  const b = $("profBadge");
-  b.hidden = !profs.length;
-  b.textContent = profs.length ? `${profs.join(" / ")} profile` : "";
-  b.className = "prof " + (profs.length === 1 ? profs[0] : "");
+// ======================= CO2 chart (plain canvas) =======================
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function fitCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  return { g, w, h };
 }
-
-// ---------- CO2 chart (plain canvas) ----------
-function drawChart(cv, nd) {
-  const dpr = window.devicePixelRatio || 1;
-  const w = cv.clientWidth, h = cv.clientHeight;
-  if (!w) return;
-  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
-    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
-  }
-  const g = cv.getContext("2d");
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, w, h);
-  const now = serverNow(), span = 600, left = 44, right = w - 6, top = 8, bottom = h - 18;
-  const pts = (nd.co2_hist || []).filter((p) => now - p[0] <= span);
-  g.font = "12px system-ui, sans-serif";
-  g.fillStyle = "#a3afbc";
-  g.textAlign = "left";  g.fillText("10 min ago", left, h - 3);
-  g.textAlign = "right"; g.fillText("now", right, h - 3);
-  if (!pts.length) { g.textAlign = "center"; g.fillText("no CO₂ data yet", (left + right) / 2, h / 2); return; }
-
-  const base = pts[pts.length - 1][2];
+function drawCo2(cv, nd) {
+  if (!cv.clientWidth) return;
+  const { g, w, h } = fitCanvas(cv);
+  const t = now(), span = 600, left = 46, right = w - 8, top = 10, bottom = h - 20;
+  const muted = cssVar("--muted"), line = cssVar("--line");
+  const pts = (nd.co2_hist || []).filter((p) => t - p[0] <= span);
+  g.font = "12px system-ui, sans-serif"; g.fillStyle = muted;
+  g.textAlign = "left"; g.fillText("10 min ago", left, h - 4); g.textAlign = "right"; g.fillText("now", right, h - 4);
+  if (!pts.length) { g.textAlign = "center"; g.fillText("no CO₂ data", (left + right) / 2, h / 2); return; }
   const vals = pts.flatMap((p) => (p[2] != null ? [p[1], p[2]] : [p[1]]));
   let lo = Math.min(...vals), hi = Math.max(...vals);
   const padY = Math.max(40, (hi - lo) * 0.15);
   lo = Math.max(0, Math.floor((lo - padY) / 50) * 50); hi = Math.ceil((hi + padY) / 50) * 50;
-  const X = (t) => left + (right - left) * (1 - (now - t) / span);
-  const Y = (v) => bottom - (bottom - top) * (v - lo) / (hi - lo);
-
-  g.strokeStyle = "#2b343e"; g.lineWidth = 1;
-  g.textAlign = "right"; g.textBaseline = "middle";
-  for (const v of [lo, (lo + hi) / 2, hi]) {
-    g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke();
-    g.fillText(Math.round(v), left - 6, Y(v));
-  }
-  g.textBaseline = "alphabetic";
-
-  // shaded band where each sudden rise happened (from its start to when it was detected)
-  g.fillStyle = "rgba(255, 140, 26, 0.28)";
+  const X = (x) => left + (right - left) * (1 - (t - x) / span), Y = (v) => bottom - (bottom - top) * (v - lo) / (hi - lo);
+  g.fillStyle = cssVar("--possible") + "44";
   for (const [a, b] of nd.co2_marks || []) {
     const x0 = Math.max(left, X(a)), x1 = Math.min(right, X(b) + 3);
     if (x1 > left && x0 < right) g.fillRect(x0, top, Math.max(3, x1 - x0), bottom - top);
   }
-  if (base != null) {
-    g.setLineDash([6, 5]); g.strokeStyle = "#a3afbc"; g.lineWidth = 1.5;      // baseline: dashed
-    g.beginPath(); g.moveTo(left, Y(base)); g.lineTo(right, Y(base)); g.stroke();
-    g.setLineDash([]);
-  }
-  const color = STATUS_COLOR[nd.lost ? "LOST" : nd.status] || "#4ea1ff";
-  g.strokeStyle = color === STATUS_COLOR["NO SIGNS"] || color === STATUS_COLOR.LOST ? "#4ea1ff" : color;
-  g.lineWidth = 2.5; g.lineJoin = "round";
-  g.beginPath();
-  pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1]))));
-  g.stroke();
-  const last = pts[pts.length - 1];
-  g.fillStyle = g.strokeStyle;
-  g.beginPath(); g.arc(X(last[0]), Y(last[1]), 4, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = line; g.lineWidth = 1; g.fillStyle = muted; g.textAlign = "right"; g.textBaseline = "middle";
+  for (const v of [lo, (lo + hi) / 2, hi]) { g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke(); g.fillText(Math.round(v), left - 6, Y(v)); }
+  g.textBaseline = "alphabetic";
+  const base = pts[pts.length - 1][2];
+  if (base != null) { g.setLineDash([6, 5]); g.strokeStyle = muted; g.lineWidth = 1.5; g.beginPath(); g.moveTo(left, Y(base)); g.lineTo(right, Y(base)); g.stroke(); g.setLineDash([]); }
+  g.strokeStyle = cssVar("--blue"); g.lineWidth = 2.5; g.lineJoin = "round"; g.beginPath();
+  pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); g.stroke();
 }
 
-// ---------- timeline ----------
-function addEvent(ev, isNew) {
-  if (!ev || (ev.id != null && seenEvents.has(ev.id))) return;
-  if (ev.id != null) seenEvents.add(ev.id);
-  const li = document.createElement("li");
-  if (ev.out) li.classList.add("out");
-  if (isNew) li.classList.add("new");
-  const dot = document.createElement("span"); dot.className = "tdot";
-  if (!ev.out) {
-    const st = /status is now (NO SIGNS|POSSIBLE|LIKELY|CONFIRMED|UNRESPONSIVE)/.exec(ev.desc);
-    const heard = ev.e === "SOUND" || ev.e === "VOICE" || (ev.e === "TAP" && /knocking/.test(ev.desc));
-    const co2 = ev.e === "CO2" ? LVL_DOT[ev.lvl] || "#a3afbc" : null;
-    const callDot = { CALL: "#4ea1ff", RESP: STATUS_COLOR.LIKELY, NORESP: "#a3afbc",
-      DANGER: "#ff3b3b" }[ev.e];
-    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : callDot ? callDot : heard ? "#ff8c1a" : co2 ? co2
-      : ev.stage === "first" ? STATUS_COLOR.LIKELY : ev.stage === "confirmed" ? STATUS_COLOR.CONFIRMED
-      : st ? STATUS_COLOR[st[1]] : "#a3afbc";
-    if (ev.stage) li.classList.add(ev.stage);              // "first" (yellow) / "confirmed" (green)
-    if (ev.e === "STUCK") li.classList.add("stuck");
-    if (ev.stage === "confirmed" && isNew) alertSound();
+// ======================= situation radar =======================
+const STATUS_VAR = { UNRESPONSIVE: "--unresp", CONFIRMED: "--confirmed", LIKELY: "--likely", POSSIBLE: "--possible", "NO SIGNS": "--none", LOST: "--lost" };
+function renderRadar() {
+  const cv = $("radar");
+  if (view !== "situation" || !cv.clientWidth) return;
+  const { g, w, h } = fitCanvas(cv);
+  const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 30;
+  const muted = cssVar("--muted"), line = cssVar("--line"), text = cssVar("--text");
+  const placed = [], unplaced = [];
+  for (const nd of sortedNodes()) {
+    const l = locNow(nd);
+    if (l && meta.base) placed.push({ nd, l, ...distBearing(meta.base.lat, meta.base.lon, l.lat, l.lon) });
+    else unplaced.push({ nd, l });
   }
-  const t = document.createElement("time"); t.textContent = hms(ev.ts);
-  const txt = document.createElement("span");
-  txt.textContent = `Node ${ev.n}: ${ev.e === "STUCK" ? "⚠ " : ""}${ev.desc}`;
-  li.append(dot, t, txt);
-  const list = $("timeline");
-  list.insertBefore(li, isNew ? list.firstChild : null);
-  while (list.children.length > 200) list.lastChild.remove();
+  // auto-scale: the smallest ring that fits every node
+  const RINGS = [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+  const far = Math.max(10, ...placed.map((p) => p.d * 1.1));
+  const maxR = RINGS.find((r) => r >= far) || far;
+  const rings = RINGS.filter((r) => r <= maxR).slice(-4);
+  g.font = "13px system-ui, sans-serif";
+  for (const r of rings) {
+    const rr = R * r / maxR;
+    g.strokeStyle = line; g.lineWidth = 1; g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.stroke();
+    // label on the lower-right of each ring (nodes are labelled to their right), only if it fits
+    if (rr > 28) { g.fillStyle = muted; g.textAlign = "left"; g.fillText(fmtDist(r), cx + rr * 0.71 + 4, cy + rr * 0.71 + 14); }
+  }
+  g.strokeStyle = line; g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+  // north arrow
+  g.fillStyle = text; g.beginPath(); g.moveTo(cx, 6); g.lineTo(cx - 8, 24); g.lineTo(cx + 8, 24); g.closePath(); g.fill();
+  g.textAlign = "center"; g.font = "bold 14px system-ui, sans-serif"; g.fillText("N", cx + 18, 22);
+  // base
+  g.fillStyle = cssVar("--blue"); g.fillRect(cx - 7, cy - 7, 14, 14);
+  g.fillStyle = text; g.font = "13px system-ui, sans-serif"; g.fillText("BASE", cx, cy + 24);
+  if (!meta.base) { g.fillStyle = muted; g.font = "16px system-ui, sans-serif"; g.fillText("Set the base location (right) to plot nodes", cx, cy - 40); }
+  for (const p of placed) {
+    const st = statusOf(p.nd), x = cx + R * p.dx / maxR, y = cy - R * p.dy / maxR, col = cssVar(STATUS_VAR[st]);
+    if (p.l.acc) { g.strokeStyle = col; g.globalAlpha = .35; g.beginPath(); g.arc(x, y, Math.max(8, R * p.l.acc / maxR), 0, Math.PI * 2); g.stroke(); g.globalAlpha = 1; }
+    g.fillStyle = col; g.beginPath(); g.arc(x, y, 11, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = text; g.lineWidth = p.nd.n === selected ? 3 : 1; g.stroke(); g.lineWidth = 1;
+    g.fillStyle = text; g.font = "bold 14px system-ui, sans-serif"; g.textAlign = "left";
+    g.fillText(`N${p.nd.n} ${ICON[st]} ${st}${p.nd.danger ? " ⛔" : ""}`, x + 15, y + 5);
+  }
+  $("placed").innerHTML = placed.length ? placed.map((p) => `<div><b>N${p.nd.n}</b> ${ICON[statusOf(p.nd)]} ${statusOf(p.nd)} · ${fmtDist(p.d)} ${COMPASS[Math.round(p.b / 45) % 8]} · <span class="loc ${p.l.src}">${p.l.src}</span></div>`).join("") : "–";
+  $("unplaced").innerHTML = unplaced.length ? unplaced.map((p) => `<div><b>N${p.nd.n}</b> ${ICON[statusOf(p.nd)]} ${statusOf(p.nd)} · ${p.l ? "base location not set" : "no GPS fix / no manual location"}</div>`).join("") : "–";
 }
 
-// ---------- alert sound (Web Audio, no files needed) ----------
-// Browsers block audio until the user interacts with the page once.
-let audio = null;
-function enableAudio() {
-  try {
-    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-    audio.resume();
-    $("alertsBtn").classList.add("on");
-  } catch (e) { /* no audio support: alerts stay visual only */ }
+// ======================= event log =======================
+function renderLog() {
+  if (view !== "log") return;
+  const rows = events.filter((e) => filter === "all" || e.cat === filter).slice(0, 300);
+  $("log").querySelector("tbody").innerHTML = rows.map((e) => `<tr><td class="num">${hms(e.ts)}</td><td>${e.n != null ? "N" + e.n : "–"}</td>
+    <td><span class="cat ${e.cat}">${{ alerts: "alert", comms: "comms", sensors: "sensor", system: "system" }[e.cat] || e.cat}</span></td>
+    <td>${esc(e.desc)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">Nothing yet.</td></tr>`;
 }
-document.addEventListener("click", enableAudio, { once: true });
-function alertSound() {
-  if (!audio || audio.state !== "running") return;
+async function exportLog(kind) {
+  const res = await fetch("/api/events?limit=20000");
+  const rows = (await res.json()).reverse();                       // oldest first
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  let blob, name;
+  if (kind === "json") {
+    blob = new Blob([JSON.stringify({ incident: meta.incident, base: meta.base, exported: new Date().toISOString(), events: rows }, null, 1)], { type: "application/json" });
+    name = `incident-log-${stamp}.json`;
+  } else {
+    const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+    const lines = ["id,time_utc,node,type,direction,category,description,raw"].concat(rows.map((r) =>
+      [r.id, new Date(r.ts * 1000).toISOString(), r.n ?? "", r.type, r.dir, r.cat ?? "", q(r.desc), q(r.raw)].join(",")));
+    blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    name = `incident-log-${stamp}.csv`;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// ======================= alert sound (Web Audio, no files) =======================
+let audio = null, soundOn = load("sound") === "on", lastAlertSound = 0, knownAlerts = new Set();
+function ensureAudio() {
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) {}
+}
+function tone(freqs, step = 0.22) {
+  if (!soundOn || !audio || audio.state !== "running") return;
   const t0 = audio.currentTime;
-  [0, 0.25, 0.5].forEach((dt, i) => {        // three rising beeps
+  freqs.forEach((f, i) => {
     const o = audio.createOscillator(), g = audio.createGain();
-    o.type = "square"; o.frequency.value = 880 + i * 220;
-    g.gain.setValueAtTime(0.0001, t0 + dt);
-    g.gain.exponentialRampToValueAtTime(0.25, t0 + dt + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.2);
-    o.connect(g).connect(audio.destination);
-    o.start(t0 + dt); o.stop(t0 + dt + 0.22);
+    o.type = "square"; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t0 + i * step); g.gain.exponentialRampToValueAtTime(0.25, t0 + i * step + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * step + step * 0.9);
+    o.connect(g).connect(audio.destination); o.start(t0 + i * step); o.stop(t0 + i * step + step);
   });
 }
-
-// ---------- commands ----------
-function feedback(r, text, kind) {   // per-card message under the controls
-  r.fb.textContent = text; r.fb.className = "feedback " + (kind || "");
-  clearTimeout(r.fbTimer); r.fbTimer = setTimeout(() => { r.fb.textContent = ""; }, 6000);
+function alertSound() {
+  const open = alerts.filter((a) => !a.acked_at);
+  if (!open.length) return;
+  lastAlertSound = Date.now() / 1000;
+  if (open.some((a) => a.kind !== "CONFIRMED")) tone([1200, 800, 1200, 800]);   // urgent two-tone
+  else tone([880, 1100, 1320]);                                                  // rising: good news
 }
-async function send(cmd, btn, r, onOk) {
-  btn.disabled = true;
+function renderSound() { $("sound").textContent = soundOn ? "🔊" : "🔇"; $("sound").title = soundOn ? "Alert sound ON (click to mute)" : "Alert sound OFF (click to enable)"; }
+
+// ======================= talking to the server =======================
+function operator() {
+  let name = load("operator");
+  if (!name) { name = (prompt("Your name (recorded with acknowledgements):", "") || "").trim().slice(0, 30); if (name) { store("operator", name); renderOperator(); } }
+  return name || "Operator";
+}
+function renderOperator() { const n = load("operator"); $("operator").textContent = n ? `👤 ${n}` : "👤 set name"; }
+async function post(url, body, msgEl, okText) {
   try {
-    const res = await fetch("/api/cmd", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cmd) });
-    const body = await res.json().catch(() => ({}));
-    if (res.ok && body.ok) { feedback(r, `✓ Sent to node ${cmd.n} by LoRa`, "ok"); onOk && onOk(); }
-    else feedback(r, `✗ ${body.error || "send failed (" + res.status + ")"}`, "err");
-  } catch (e) {
-    feedback(r, "✗ Base station unreachable", "err");
-  } finally {
-    setTimeout(() => (btn.disabled = false), 600);  // avoid double-sends on a shaky click
-  }
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok !== false) { if (msgEl) { msgEl.className = "ok-text"; msgEl.textContent = okText || "✓ done"; } return true; }
+    if (msgEl) { msgEl.className = "err-text"; msgEl.textContent = "✗ " + (data.error || `failed (${res.status})`); }
+  } catch (e) { if (msgEl) { msgEl.className = "err-text"; msgEl.textContent = "✗ base station unreachable"; } }
+  return false;
 }
+const cmd = (c, msgEl, okText) => post("/api/cmd", c, msgEl, okText);
 
-// ---------- live link ----------
-function setSource(s) {
-  $("srcDot").className = "dot " + (s.connected ? "ok" : "bad");
-  $("srcText").textContent = s.name === "sim" ? "Simulator" : s.connected ? "Receiver OK" : "Receiver offline";
-  $("srcText").title = s.detail || "";
-}
+// ======================= live link =======================
 let retry = 1000;
 function connect() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-  ws.onopen = () => { retry = 1000; $("wsDot").className = "dot ok"; $("wsText").textContent = "Live"; };
-  ws.onclose = () => {
-    $("wsDot").className = "dot bad"; $("wsText").textContent = "Reconnecting…";
-    setTimeout(connect, retry); retry = Math.min(retry * 2, 10000);
-  };
+  ws.onopen = () => { retry = 1000; $("wsDot").className = "dot ok"; $("wsBox").title = "Page is live (connected to the base station)"; $("wsText").hidden = true; };
+  ws.onclose = () => { $("wsDot").className = "dot bad"; $("wsText").textContent = "page reconnecting…"; $("wsText").hidden = false; setTimeout(connect, retry); retry = Math.min(retry * 2, 10000); };
   ws.onerror = () => ws.close();
   ws.onmessage = (m) => {
     let d; try { d = JSON.parse(m.data); } catch { return; }
     if (d.server_time) serverOffset = d.server_time - Date.now() / 1000;
+    if (d.last_rx !== undefined) lastRx = d.last_rx;
     if (d.type === "full") {
-      for (const nd of d.nodes) { nodes.set(nd.n, nd); render(nd); }
-      $("timeline").textContent = ""; seenEvents.clear();
-      d.events.forEach((ev) => addEvent(ev, false));
-      setSource(d.source);
+      nodes.clear(); d.nodes.forEach((nd) => nodes.set(nd.n, nd));
+      events = d.events; alerts = d.alerts; meta = d.meta || {}; nodeMeta = d.node_meta || {}; source = d.source;
+      for (const a of alerts) knownAlerts.add(a.id);
+      if (selected != null && !nodes.has(selected)) selected = null;
+      if (selected != null) select(selected);
     } else if (d.type === "node") {
-      nodes.set(d.node.n, d.node); render(d.node); addEvent(d.event, true);
+      nodes.set(d.node.n, d.node);
+      if (d.event) addEvent(d.event);
     } else if (d.type === "event") {
-      addEvent(d.event, true);
+      addEvent(d.event);
+    } else if (d.type === "alerts") {
+      const fresh = d.alerts.filter((a) => !knownAlerts.has(a.id) && !a.acked_at);
+      alerts = d.alerts; for (const a of alerts) knownAlerts.add(a.id);
+      if (fresh.length) alertSound();
+    } else if (d.type === "meta") {
+      meta = d.meta || {};
+    } else if (d.type === "node_meta") {
+      nodeMeta = d.node_meta || {};
     } else if (d.type === "source") {
-      setSource(d.source);
+      source = d.source;
     }
+    renderAll();
   };
 }
+function addEvent(e) {
+  if (e.id != null && events.some((x) => x.id === e.id)) return;
+  events.unshift(e); if (events.length > 500) events.length = 500;
+  const nd = nodes.get(e.n);
+  if (nd && !(nd.events || []).some((x) => x.id === e.id && e.id != null)) (nd.events = nd.events || []).unshift(e);
+}
+function renderAll() { renderTop(); renderBanner(); renderTriage(); renderDetail(); renderRadar(); renderLog(); }
 
-// clock + "last heard" + chart scroll, once a second
+// ======================= UI wiring =======================
+document.addEventListener("click", (ev) => {
+  ensureAudio();
+  const ack = ev.target.closest("[data-ack]");
+  if (ack) post("/api/ack", { id: Number(ack.dataset.ack), by: operator() });
+});
+$("triage").addEventListener("click", (ev) => { const tr = ev.target.closest("tr[data-n]"); if (tr) select(Number(tr.dataset.n)); });
+$("triage").addEventListener("keydown", (ev) => { const tr = ev.target.closest("tr[data-n]"); if (tr && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); select(Number(tr.dataset.n)); } });
+document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => {
+  view = b.dataset.view;
+  document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", x === b));
+  for (const v of ["triage", "situation", "log"]) $("view-" + v).hidden = v !== view;
+  if (view === "situation" && meta.base) { $("bLat").value = meta.base.lat; $("bLon").value = meta.base.lon; }
+  renderAll();
+}));
+document.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => {
+  filter = b.dataset.filter;
+  document.querySelectorAll("[data-filter]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  renderLog();
+}));
+$("expCsv").addEventListener("click", () => exportLog("csv"));
+$("expJson").addEventListener("click", () => exportLog("json"));
+$("alertCount").addEventListener("click", () => { const a = alerts.find((x) => !x.acked_at); if (a) { document.querySelector('.tab[data-view="triage"]').click(); select(a.n); } });
+$("incident").addEventListener("click", () => {
+  const name = prompt("Incident name:", meta.incident || "");
+  if (name !== null) post("/api/meta", { incident: name, by: operator() });
+});
+$("operator").addEventListener("click", () => { store("operator", ""); operator(); renderOperator(); });
+$("sound").addEventListener("click", () => { soundOn = !soundOn; store("sound", soundOn ? "on" : "off"); ensureAudio(); renderSound(); if (soundOn) tone([880]); });
+function setTheme(t) { document.documentElement.dataset.theme = t; store("theme", t); $("theme").textContent = t === "dark" ? "☀" : "☾"; $("theme").title = t === "dark" ? "Switch to day mode" : "Switch to night mode"; renderAll(); }
+$("theme").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+
+// detail panel actions (always for the selected node)
+$("dAck").addEventListener("click", () => post("/api/ack", { n: selected, by: operator() }));
+document.querySelectorAll("#detail [data-cmd]").forEach((b) => b.addEventListener("click", () => cmd({ t: b.dataset.cmd, n: selected }, $("msgErr"), "✓ call requested")));
+document.querySelectorAll("#detail [data-msg]").forEach((b) => b.addEventListener("click", () => cmd({ t: "MSG", n: selected, txt: b.dataset.msg }, $("msgErr"), "✓ message sent")));
+$("msgTxt").addEventListener("input", () => { $("msgCount").textContent = `${$("msgTxt").value.length}/60`; $("msgTxt").classList.remove("err"); $("msgErr").textContent = ""; });
+$("fMsg").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const txt = $("msgTxt").value.trim();
+  if (!txt) { $("msgTxt").classList.add("err"); $("msgErr").className = "err-text"; $("msgErr").textContent = "Type a message first."; $("msgTxt").focus(); return; }
+  if (await cmd({ t: "MSG", n: selected, txt }, $("msgErr"), "✓ message sent")) { $("msgTxt").value = ""; $("msgCount").textContent = "0/60"; }
+});
+$("bTeam").addEventListener("click", () => post("/api/node_meta", { n: selected, team: $("fTeam").value, by: operator() }, $("metaMsg"), "✓ team assigned"));
+$("bTag").addEventListener("click", () => post("/api/node_meta", { n: selected, tag: $("fTag").value, by: operator() }, $("metaMsg"), "✓ tag saved"));
+$("bNotes").addEventListener("click", () => post("/api/node_meta", { n: selected, notes: $("fNotes").value, by: operator() }, $("metaMsg"), "✓ notes saved"));
+$("bDanger").addEventListener("click", () => { const nd = nodes.get(selected); cmd({ t: "DANGER", n: selected, on: !(nd && nd.danger) }, $("ctlMsg"), ""); });
+$("bReset").addEventListener("click", () => {
+  if (confirm(`Reset node ${selected}? It forgets all evidence and counters (use for a false alarm).`)) cmd({ t: "RESET", n: selected }, $("ctlMsg"), "✓ reset sent");
+});
+$("dCopy").addEventListener("click", async () => {
+  const txt = $("dLatLon").textContent;
+  try { await navigator.clipboard.writeText(txt); $("dCopyMsg").textContent = "✓ copied"; }
+  catch (e) { prompt("Copy this position:", txt); }
+});
+function readLatLon(latEl, lonEl, msgEl) {
+  const lat = Number(latEl.value), lon = Number(lonEl.value);
+  latEl.classList.toggle("err", !(latEl.value.trim() && lat >= -90 && lat <= 90));
+  lonEl.classList.toggle("err", !(lonEl.value.trim() && lon >= -180 && lon <= 180));
+  if (latEl.classList.contains("err") || lonEl.classList.contains("err")) { msgEl.className = "err-text"; msgEl.textContent = "Latitude -90…90 and longitude -180…180 (decimal degrees)."; return null; }
+  return { lat, lon };
+}
+$("fLoc").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const p = readLatLon($("fLat"), $("fLon"), $("fLocMsg"));
+  if (p) cmd({ t: "SETLOC", n: selected, ...p, label: $("fLabel").value }, $("fLocMsg"), "✓ sent: the node will report it as MANUAL");
+});
+$("fBase").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const p = readLatLon($("bLat"), $("bLon"), $("bMsg"));
+  if (p) post("/api/meta", { base: p, by: operator() }, $("bMsg"), "✓ saved");
+});
+window.addEventListener("resize", renderAll);
+
+// once a second: clock, ages, countdowns, repeating alert sound
 setInterval(() => {
   const d = new Date();
   $("clock").textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  nodes.forEach(render);
+  if (alerts.some((a) => !a.acked_at) && Date.now() / 1000 - lastAlertSound >= ALERT_REPEAT) alertSound();
+  renderAll();
 }, 1000);
-window.addEventListener("resize", () => nodes.forEach(render));
+
+const savedTheme = load("theme");
+setTheme(savedTheme || (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+renderOperator(); renderSound();
 connect();
 </script>
 </body>

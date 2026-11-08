@@ -96,3 +96,25 @@ class CallCycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Evidence(unittest.TestCase):
+    def test_ev_stored_and_sn_not_on_timeline(self):
+        s = State()
+        apply(s, '{"t":"ST","n":1,"st":"POSSIBLE","why":"heard knocking","ev":{"btn":"none","snd":"TAP",'
+                 '"co2":"NORMAL","resp":0,"miss":1,"dg":0}}', 1)
+        nd = s.snapshot(2)[1]
+        self.assertEqual(nd["ev"]["snd"], "TAP")
+        self.assertEqual(nd["calls_unanswered"], 1)
+        self.assertIsNone(apply(s, '{"t":"SN","n":1,"co2":900,"bat":80}', 3))
+        self.assertEqual(s.snapshot(4)[1]["bat"], 80)
+
+
+class LocationState(unittest.TestCase):
+    def test_loc_stored_and_only_source_changes_logged(self):
+        s = State()
+        self.assertIsNotNone(apply(s, '{"t":"LOC","n":2,"src":"LIVE","lat":42.36,"lon":-71.05,"acc":8,"age":0}', 1))
+        self.assertIsNone(apply(s, '{"t":"LOC","n":2,"src":"LIVE","lat":42.36,"lon":-71.05,"acc":6,"age":0}', 31))
+        self.assertIsNotNone(apply(s, '{"t":"LOC","n":2,"src":"LAST","lat":42.36,"lon":-71.05,"age":12}', 61))
+        nd = s.snapshot(62)[2]
+        self.assertEqual((nd["loc"]["src"], nd["loc"]["age"], nd["loc_ts"]), ("LAST", 12, 61))

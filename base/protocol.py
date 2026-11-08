@@ -8,7 +8,8 @@ import json
 
 STATUSES = ("NO SIGNS", "POSSIBLE", "LIKELY", "CONFIRMED", "UNRESPONSIVE")
 EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND", "CO2",
-          "CALL", "RESP", "BEEP", "DANGER")
+          "CALL", "RESP", "BEEP", "DANGER", "BOOT")
+BOOT_PARTS = ("sound", "co2", "gps", "button", "speaker")
 CO2_LEVELS = ("LEARNING", "NORMAL", "ELEVATED", "SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")
 CO2_EVIDENCE = ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")   # ELEVATED/NORMAL are info only
 PROFILES = ("DEMO", "FIELD")
@@ -33,6 +34,15 @@ _NUMERIC = {"co2": float, "base": float, "bat": float, "rssi": float,
 _CHOICES = {"lvl": CO2_LEVELS, "prev": CO2_LEVELS, "prof": PROFILES,
             "kind": SOUND_KINDS, "p": BEEPS, "call_state": CALL_STATES, "mic": ("on", "muted")}
 _BOOLS = ("on", "danger")                           # true / false fields
+# Short field names the node uses to keep LoRa packets small -> the names used here.
+# (Older nodes send the long names; both work.)
+_ALIASES = {"cs": "call_state", "ll": "listen_left", "nc": "next_call_in", "rhb": "rh_base"}
+# Evidence snapshot "ev" in ST / HB: why the node chose its status
+EV_CHOICES = {"btn": ("none", "first", "confirmed"), "snd": ("none", "TAP", "VOICE"),
+              "co2": CO2_LEVELS + ("NONE",)}
+EV_NUMBERS = ("resp", "miss", "dg")
+MSG_TYPES = ("HB", "ST", "EV", "SN", "LOC")
+LOC_SOURCES = ("LIVE", "LAST", "MANUAL", "NONE")
 
 
 def _num(value, kind):
@@ -69,8 +79,11 @@ def parse_line(line):
         return None, "JSON is not an object"
 
     t = raw.get("t")
-    if t not in ("HB", "ST", "EV"):
+    if t not in MSG_TYPES:
         return None, f"unknown type {t!r}"
+    for short, long in _ALIASES.items():
+        if short in raw and long not in raw:
+            raw[long] = raw[short]
     n = _num(raw.get("n"), int)
     if n is None or n < 0:
         return None, "missing/bad node id 'n'"
@@ -87,6 +100,20 @@ def parse_line(line):
     for key in _BOOLS:
         if isinstance(raw.get(key), bool):
             msg[key] = raw[key]
+    if isinstance(raw.get("ev"), dict):
+        ev = {}
+        for key, allowed in EV_CHOICES.items():
+            if raw["ev"].get(key) in allowed:
+                ev[key] = raw["ev"][key]
+        for key in EV_NUMBERS:
+            val = _num(raw["ev"].get(key), int)
+            if val is not None:
+                ev[key] = val
+        msg["ev"] = ev
+        if "miss" in ev:
+            msg.setdefault("calls_unanswered", ev["miss"])
+        if "dg" in ev:
+            msg.setdefault("danger", bool(ev["dg"]))
 
     st = raw.get("st")
     if st is not None:
@@ -97,6 +124,23 @@ def parse_line(line):
         return None, "ST message without 'st'"
     if isinstance(raw.get("why"), str):
         msg["why"] = raw["why"][:120]
+
+    if t == "LOC":
+        src = raw.get("src")
+        if src not in LOC_SOURCES:
+            return None, "LOC needs src (LIVE/LAST/MANUAL/NONE)"
+        msg["src"] = src
+        if src != "NONE":
+            lat, lon = _num(raw.get("lat"), float), _num(raw.get("lon"), float)
+            if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                return None, "LOC needs a valid lat/lon"
+            msg["lat"], msg["lon"] = lat, lon
+            for key in ("acc", "age", "sats"):
+                val = _num(raw.get(key), int)
+                if val is not None:
+                    msg[key] = val
+            if isinstance(raw.get("label"), str):
+                msg["label"] = raw["label"][:30]
 
     if t == "EV":
         e = raw.get("e")
@@ -122,6 +166,9 @@ def parse_line(line):
             return None, "RESP needs kind (TAP/VOICE)"
         elif e == "DANGER" and "on" not in msg:
             return None, "DANGER needs on (true/false)"
+        elif e == "BOOT":
+            parts = raw.get("sensors") if isinstance(raw.get("sensors"), dict) else {}
+            msg["sensors"] = {k: bool(parts[k]) for k in BOOT_PARTS if k in parts}
     return msg, None
 
 
@@ -186,7 +233,15 @@ def validate_command(cmd):
         if not isinstance(cmd.get("on"), bool):
             raise ValueError("danger needs on: true or false")
         return {"t": "DANGER", "n": n, "on": cmd["on"]}
-    raise ValueError("t must be CALL, MSG, ASK, DANGER or RESET")
+    if t == "SETLOC":
+        lat, lon = _num(cmd.get("lat"), float), _num(cmd.get("lon"), float)
+        if lat is None or not -90 <= lat <= 90:
+            raise ValueError("latitude must be a number from -90 to 90")
+        if lon is None or not -180 <= lon <= 180:
+            raise ValueError("longitude must be a number from -180 to 180")
+        label = cmd.get("label") if isinstance(cmd.get("label"), str) else ""
+        return {"t": "SETLOC", "n": n, "lat": lat, "lon": lon, "label": label.strip()[:20]}
+    raise ValueError("t must be CALL, MSG, ASK, DANGER, SETLOC or RESET")
 
 
 def describe(msg, outgoing=False):
@@ -204,9 +259,23 @@ def describe(msg, outgoing=False):
             return "Rescuer reset the node (false alarm)"
         if t == "DANGER":
             return "Rescuer turned the danger alarm " + ("ON (test)" if msg.get("on") else "off")
+        if t == "SETLOC":
+            label = f' "{msg["label"]}"' if msg.get("label") else ""
+            return f"Rescuer set the location manually: {msg['lat']:.5f}, {msg['lon']:.5f}{label}"
         return f"Rescuer sent {t}"
     if t == "HB":
         return f"heartbeat ({msg.get('st', '?')})"
+    if t == "SN":
+        return "sensor readings"
+    if t == "LOC":
+        src = msg["src"]
+        if src == "LIVE":
+            return "Location: GPS fix" + (f" (±{msg['acc']} m est.)" if "acc" in msg else "")
+        if src == "LAST":
+            return "Location: GPS fix lost, using last known position"
+        if src == "MANUAL":
+            return "Location: set manually" + (f" ({msg['label']})" if msg.get("label") else "")
+        return "Location: unknown (no GPS fix)"
     if t == "ST":
         why = msg.get("why")
         if msg["st"] == "UNRESPONSIVE" and why:
@@ -245,6 +314,10 @@ def describe(msg, outgoing=False):
                 }.get(msg.get("p"), f"Node beeped ({msg.get('p')})")
     if e == "DANGER":
         return "Danger alarm ON" if msg["on"] else "Danger alarm off"
+    if e == "BOOT":
+        parts = msg.get("sensors", {})
+        missing = [k for k, ok in parts.items() if not ok]
+        return "Node started" + (f" (missing: {', '.join(missing)})" if missing else " (all parts OK)")
     if e == "SHIFT":
         return "PILE MOVEMENT detected: clear the area"
     if e == "ANS":

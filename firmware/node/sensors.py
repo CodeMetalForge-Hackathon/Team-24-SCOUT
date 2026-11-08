@@ -1,5 +1,6 @@
 import time
 import digitalio
+from buttonlogic import PressLogic
 
 
 class Button:
@@ -25,31 +26,11 @@ class Button:
             self.led = digitalio.DigitalInOut(led_pin)
             self.led.direction = digitalio.Direction.OUTPUT
 
-        self.arm_until = arm_until
-        self.stuck_secs = stuck_secs
-        self.debounce = debounce
-        self.down = False
-        self.last_change = -1
-        self.press_start = 0
-        self.stuck = False
+        # the press / stuck / arming rules live in buttonlogic.py (tested on the laptop)
+        self.logic = PressLogic(arm_until, stuck_secs, debounce)
 
     def update(self, now):
-        down = self.btn.value != self.idle
-        if down != self.down and now - self.last_change > self.debounce:
-            self.down = down
-            self.last_change = now
-            if down:                                  # just pressed: start timing
-                self.press_start = now
-                self.stuck = False
-                return None
-            # just released: count it only if it was a normal, armed press
-            if self.stuck or self.press_start < self.arm_until:
-                return None
-            return "PRESS"
-        if self.down and not self.stuck and now - self.press_start >= self.stuck_secs:
-            self.stuck = True
-            return "STUCK"
-        return None
+        return self.logic.update(now, self.btn.value != self.idle)
 
     def set_led(self, now, mode):
         """mode: 'blink' = slow (waiting), 'fast' = press again!, 'on' = confirmed."""
@@ -84,13 +65,13 @@ class Vibration:
 
         self.last_value = self.idle
         self.debounce = debounce
-        self.last_tap = 0
+        self.last_tap = None
 
     def update(self, now):
         v = self.pin.value
         tapped = False
         if v != self.last_value:
-            if v != self.idle and now - self.last_tap > self.debounce:
+            if v != self.idle and (self.last_tap is None or now - self.last_tap > self.debounce):
                 tapped = True
                 self.last_tap = now
             self.last_value = v
@@ -165,6 +146,30 @@ class CO2Sensor:
     def rh_baseline(self): return self.levels.rh_baseline
 
 
+class Battery:
+    """MAX17048 fuel gauge on the Feather (I2C 0x36). Read at most every 30 s.
+    .percent is None if there's no gauge or no battery."""
+    def __init__(self, i2c):
+        self.percent = None
+        self.last_read = None
+        self.gauge = None
+        try:
+            import adafruit_max1704x  # type: ignore
+            self.gauge = adafruit_max1704x.MAX17048(i2c)
+        except Exception as e:
+            print("Battery gauge not available (", e, ")")
+
+    def update(self, now):
+        if self.gauge is None or (self.last_read is not None and now - self.last_read < 30):
+            return
+        self.last_read = now
+        try:
+            p = self.gauge.cell_percent
+            self.percent = int(max(0, min(100, p))) if p is not None else None
+        except Exception:
+            self.percent = None
+
+
 class SoundSensor:
     """Grove Sound Sensor on an analog pin.
     'TAP'   = short AND very loud (knock)
@@ -182,7 +187,7 @@ class SoundSensor:
         self.voice_min = voice_min_windows
         self.run = 0          # loud slices in a row
         self.peak = 0         # loudest slice during this sound
-        self.last_tap = 0
+        self.last_tap = None  # None = never (not "at time 0")
         self.level = 0
 
     def reset_run(self):
@@ -217,7 +222,7 @@ class SoundSensor:
         self.run, self.peak = 0, 0
 
         if length <= self.tap_max and peak > self.tap_threshold:
-            if now - self.last_tap > 0.15:
+            if self.last_tap is None or now - self.last_tap > 0.15:
                 self.last_tap = now
                 return "TAP"
             return None

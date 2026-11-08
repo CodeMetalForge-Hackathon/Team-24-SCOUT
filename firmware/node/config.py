@@ -22,6 +22,11 @@ ENABLE_VIBRATION = False     # set True once the vibration sensor is wired to 3V
 ENABLE_SOUND = True
 ENABLE_CO2 = True            # SCD41 on the SEN-25200 via STEMMA QT / I2C
 ENABLE_TILT = False          # tilt switch on D6 -> DANGER siren (not wired yet)
+ENABLE_GPS = True            # Mini GPS PA1010D on I2C 0x10 (Qwiic, chained after the CO2 board)
+
+# ---- location ----
+GPS_LIVE_SECS = 10           # a fix newer than this = LIVE
+LOC_INTERVAL = 30            # send {"t":"LOC"} this often (and whenever the source changes)
 
 # ---- call-and-listen ----
 CALL_INTERVAL = 20 if DEMO_MODE else 60   # seconds from the end of one call to the next

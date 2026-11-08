@@ -183,3 +183,52 @@ class CallMessages(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_command({"t": "DANGER", "n": 1})
         self.assertIn("ON (test)", describe({"t": "DANGER", "n": 1, "on": True}, outgoing=True))
+
+
+class BootMessage(unittest.TestCase):
+    def test_boot_self_check(self):
+        msg, err = parse_line('{"t":"EV","n":1,"e":"BOOT","sensors":{"sound":true,"co2":true,"gps":false,'
+                              '"button":true,"speaker":true,"laser":true}}')
+        self.assertIsNone(err)
+        self.assertNotIn("laser", msg["sensors"])          # unknown parts ignored
+        self.assertEqual(describe(msg), "Node started (missing: gps)")
+
+
+class CompactMessages(unittest.TestCase):
+    def test_short_heartbeat_with_evidence(self):
+        msg, err = parse_line('{"t":"HB","n":1,"st":"UNRESPONSIVE","ev":{"btn":"none","snd":"none",'
+                              '"co2":"BREATHING","resp":0,"miss":2,"dg":1,"zz":5},"cs":"LISTENING",'
+                              '"ll":4,"nc":0,"mic":"on","prof":"DEMO"}')
+        self.assertIsNone(err)
+        self.assertEqual(msg["ev"], {"btn": "none", "snd": "none", "co2": "BREATHING", "resp": 0,
+                                     "miss": 2, "dg": 1})
+        self.assertEqual((msg["call_state"], msg["listen_left"], msg["calls_unanswered"], msg["danger"]),
+                         ("LISTENING", 4, 2, True))
+
+    def test_sensor_message(self):
+        msg, err = parse_line('{"t":"SN","n":1,"co2":1127,"base":813,"rh":52.3,"rhb":48.1,'
+                              '"lvl":"BREATHING","hold":54,"snd":12000,"bat":87}')
+        self.assertIsNone(err)
+        self.assertEqual((msg["co2"], msg["rh_base"], msg["bat"], msg["lvl"]), (1127, 48.1, 87, "BREATHING"))
+        self.assertEqual(describe(msg), "sensor readings")
+
+    def test_bad_evidence_values_dropped(self):
+        msg, _ = parse_line('{"t":"ST","n":1,"st":"POSSIBLE","ev":{"btn":"maybe","co2":"WEIRD","miss":"x"}}')
+        self.assertEqual(msg["ev"], {})
+
+
+class LocationMessages(unittest.TestCase):
+    def test_loc_sources(self):
+        msg, err = parse_line('{"t":"LOC","n":1,"src":"LAST","lat":42.36031,"lon":-71.0588,"acc":8,"age":312,"sats":7}')
+        self.assertIsNone(err)
+        self.assertEqual((msg["src"], msg["age"], msg["acc"]), ("LAST", 312, 8))
+        self.assertEqual(parse_line('{"t":"LOC","n":3,"src":"NONE"}')[0]["src"], "NONE")
+        self.assertIsNone(parse_line('{"t":"LOC","n":1,"src":"LIVE","lat":99,"lon":0}')[0])
+        self.assertIsNone(parse_line('{"t":"LOC","n":1,"src":"MARS"}')[0])
+
+    def test_setloc_command(self):
+        cmd = validate_command({"t": "SETLOC", "n": 3, "lat": "42.36", "lon": -71.05, "label": " Site B NE corner "})
+        self.assertEqual(cmd, {"t": "SETLOC", "n": 3, "lat": 42.36, "lon": -71.05, "label": "Site B NE corner"})
+        for bad in ({"lat": 91, "lon": 0}, {"lat": 0, "lon": 181}, {"lat": "x", "lon": 0}):
+            with self.assertRaises(ValueError):
+                validate_command({"t": "SETLOC", "n": 1, **bad})

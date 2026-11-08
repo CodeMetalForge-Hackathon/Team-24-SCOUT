@@ -5,16 +5,19 @@ import supervisor  # type: ignore
 import config
 from ui import UI
 from assess import Assessor, CONFIRMED, CO2_EVIDENCE
-from sensors import Button, Vibration, SoundSensor, CO2Sensor
+from sensors import Button, Vibration, SoundSensor, CO2Sensor, Battery
 from beeper import BeepPlayer
 from caller import Caller, CALLING, LISTENING
+from location import Location, GPSReader, header_tag
 
 boot = time.monotonic()
 arm_until = boot + config.ARMING_SECS   # presses before this are ignored
 
 ui = UI(config.NODE_ID)
+# arm_until: for the first ARMING_SECS the brain ignores every input (sensors settle)
 brain = Assessor(activity_window=config.ACTIVITY_WINDOW, response_window=config.RESPONSE_WINDOW,
-                 confirm_window=config.CONFIRM_WINDOW, combine_window=config.COMBINE_WINDOW)
+                 confirm_window=config.CONFIRM_WINDOW, combine_window=config.COMBINE_WINDOW,
+                 arm_until=arm_until)
 beeper = BeepPlayer(config.PIN_SPEAKER, config.BASE_FREQ, config.BEEPS, config.BEEP_PRIORITY,
                     config.MIC_TAIL)
 caller = Caller(config.CALL_INTERVAL, config.LISTEN_SECS, config.RESPONSE_MIN_TAPS,
@@ -40,15 +43,34 @@ if config.ENABLE_SOUND:
     except Exception as e:
         print("Sound sensor not available (", e, ") - continuing without it")
 
+# I2C bus (STEMMA QT): CO2 sensor, battery gauge, GPS. board.I2C() fails if
+# nothing is plugged in (no pull-up resistors), so everything on it is optional.
+i2c = None
+try:
+    import board  # type: ignore
+    i2c = board.I2C()
+except Exception as e:
+    print("I2C not available (", e, ") - continuing without CO2 / GPS / battery")
+
 co2 = None
-if config.ENABLE_CO2:
-    try:
-        import board  # type: ignore
-        co2 = CO2Sensor(board.I2C(), config)
-    except Exception as e:           # board.I2C() fails if nothing is on the I2C wires
-        print("I2C not available (", e, ") - continuing without CO2")
-    if co2 is not None and not co2.ok:
+if config.ENABLE_CO2 and i2c is not None:
+    co2 = CO2Sensor(i2c, config)
+    if not co2.ok:
         co2 = None
+
+battery = Battery(i2c) if i2c is not None else None
+
+# ---------- location: GPS on the same I2C bus, last fix saved in flash ----------
+loc = Location(live_secs=config.GPS_LIVE_SECS)
+gps = GPSReader(i2c) if (config.ENABLE_GPS and i2c is not None) else None
+nvm = None
+try:
+    import microcontroller  # type: ignore
+    nvm = microcontroller.nvm
+    if loc.load_saved(nvm):
+        print("Last known location from flash:", loc.fix["lat"], loc.fix["lon"], "(age unknown)")
+except Exception as e:
+    print("No flash storage for location (", e, ")")
 
 tilt = None
 if config.ENABLE_TILT:
@@ -79,12 +101,21 @@ def co2_note(now):
     return "CO2 %d (%s)%s" % (co2.ppm, signed(co2.ppm - co2.baseline), tag)
 
 
+MAX_MSG = 200   # bytes: keep every message small enough for one LoRa packet
+
+
 def report(**msg):
     """One JSON line for the base station. Over USB the dashboard reads these
     directly; later the radio sends the exact same text over LoRa.
     Normal debug prints have no { } so the dashboard ignores them."""
     msg["n"] = config.NODE_ID
-    print(json.dumps(msg))
+    try:
+        line = json.dumps(msg, separators=(",", ":"))   # no spaces: fewer bytes
+    except TypeError:                                   # older json without separators=
+        line = json.dumps(msg)
+    if len(line) > MAX_MSG:
+        print("WARNING: message is", len(line), "bytes (> %d)" % MAX_MSG)
+    print(line)
 
 
 def beep(name, now):
@@ -146,6 +177,15 @@ def handle_command(line, now):
         on = bool(cmd.get("on"))
         print("COMMAND: danger alarm", "ON" if on else "off")
         set_danger_cmd(on, now)
+    elif t == "SETLOC":
+        try:
+            lat, lon = float(cmd.get("lat")), float(cmd.get("lon"))
+        except (TypeError, ValueError):
+            print("COMMAND: bad SETLOC", cmd)
+            return
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            loc.set_manual(now, lat, lon, str(cmd.get("label", ""))[:20])
+            print("COMMAND: manual location", lat, lon, cmd.get("label", ""))
     else:
         print("COMMAND: not supported yet:", t)
 
@@ -166,6 +206,12 @@ def read_commands(now):
             cmd_buf += ch
 
 
+# ---------- startup self-check: which parts answered? ----------
+sensors_ok = {"sound": sound is not None, "co2": co2 is not None, "gps": bool(gps and gps.ok),
+              "button": True, "speaker": beeper.pwm is not None}
+print("SELF-CHECK:", " ".join("%s=%s" % (k, "ok" if v else "MISSING") for k, v in sensors_ok.items()))
+report(t="EV", e="BOOT", sensors=sensors_ok)
+
 print("Node", config.NODE_ID, "starting. Profile:", config.PROFILE,
       "| presses ignored for", config.ARMING_SECS, "s | first call in",
       int(caller.next_call - boot), "s")
@@ -175,8 +221,10 @@ last_st = (None, None)
 last_st_time = -100
 last_danger = False
 next_hb = 0
+next_loc = 0
+last_loc_src = None
 stuck_until = 0
-mic_was_muted = False
+mic_was_ignored = False
 loudest = 0          # loudest sound level since the last heartbeat (shown on dashboard)
 
 while True:
@@ -194,6 +242,8 @@ while True:
         elif ev == "PRESS":
             caller.cancel(now)                   # a press during a call: button logic takes over
             stage = brain.button_press(now)      # also resets the unanswered-call counter
+            if stage is None:                    # (can't happen: Button ignores arming presses)
+                continue
             print("EVENT: PRESS ME", stage)
             report(t="EV", e="BTN", stage=stage)
             beep("AGAIN" if stage == "first" else "CONFIRM", now)
@@ -203,13 +253,16 @@ while True:
         brain.activity(now, "TAP")
 
     # Microphone: muted while the speaker beeps (+ MIC_TAIL), so our own beeps
-    # never count as knocks. We still sample it to keep its state consistent.
+    # never count as knocks, and ignored while ARMING (the input is still settling
+    # and the display/speaker start-up clicks look like knocks). We still sample it
+    # to keep its state consistent.
     muted = beeper.playing or now < beeper.quiet_until
+    ignore_mic = muted or now < arm_until
     if sound:
-        if mic_was_muted and not muted:
-            sound.reset_run()                    # a sound that began during the beep doesn't count
+        if mic_was_ignored and not ignore_mic:
+            sound.reset_run()                    # a sound that began while ignored doesn't count
         ev = sound.update(now)
-        if muted:
+        if ignore_mic:
             ev = None
         elif sound.level > loudest:
             loudest = sound.level
@@ -231,7 +284,17 @@ while True:
                 print("EVENT: sound", ev)
                 report(t="EV", e=ev)             # "TAP" (knocking) or "VOICE"
                 brain.activity(now, ev)          # unprompted sound = weak evidence -> POSSIBLE
-    mic_was_muted = muted
+    mic_was_ignored = ignore_mic
+
+    if gps:
+        gps.update(now, loc)                     # at most one NMEA sentence, 4x per second
+        if nvm is not None and loc.should_save(now):
+            try:
+                nvm[0:len(loc.to_saved())] = loc.to_saved()
+                loc.mark_saved(now)
+                print("Location saved to flash")
+            except Exception as e:
+                print("Saving location failed (", e, ")")
 
     if co2 and co2.update(now):                  # True only when a new reading (~every 5 s)
         base = " base %d" % co2.baseline if co2.baseline is not None else ""
@@ -317,12 +380,13 @@ while True:
     else:
         prompt = ""
 
+    where = loc.best(now)
     note = "MIC OFF " if (sound and muted) else ""
     if now < arm_until:
         note += "ARMING %ds " % int(arm_until - now + 0.999)
     elif now < stuck_until:
         note += "STUCK? "
-    note += co2_note(now)
+    note += header_tag(where) + " " + co2_note(now)
     shown = (status, reason, danger, prompt, note)
     if shown != last_shown:
         ui.show(status, reason, danger, prompt, note)
@@ -334,30 +398,50 @@ while True:
     if status != last_st[0] or (reason != last_st[1]
                                 and now - last_st_time >= config.ST_MIN_INTERVAL):
         print("STATUS:", status, "|", reason)
-        report(t="ST", st=status, why=reason)
+        report(t="ST", st=status, why=reason, ev=brain.evidence(now))
         last_st = (status, reason)
         last_st_time = now
 
-    if now >= next_hb:                           # "I'm alive" + latest readings
-        hb = {"t": "HB", "st": status, "why": reason, "dg": int(danger), "danger": danger,
-              "prof": config.PROFILE, "call_state": caller.state,
-              "listen_left": int(caller.listen_left(now)),
-              "next_call_in": int(caller.next_call_in(now)),
-              "calls_unanswered": brain.unanswered_calls,
-              "mic": "muted" if muted else "on"}
+    # location in its own small message: every LOC_INTERVAL s and when the source changes
+    if now >= next_loc or where["src"] != last_loc_src:
+        msg = {"t": "LOC", "src": where["src"]}
+        if where["src"] != "NONE":
+            msg["lat"] = round(where["lat"], 5)          # 5 decimals = ~1 m
+            msg["lon"] = round(where["lon"], 5)
+            msg["age"] = where["age"]
+            for k in ("acc", "sats", "label"):
+                if where.get(k) is not None and where.get(k) != "":
+                    msg[k] = where[k]
+        report(**msg)
+        if where["src"] != last_loc_src:
+            print("LOCATION:", header_tag(where))
+        last_loc_src = where["src"]
+        next_loc = now + config.LOC_INTERVAL
+
+    if battery:
+        battery.update(now)
+    if now >= next_hb:
+        # "I'm alive": status + evidence + call cycle (short keys: one LoRa packet)
+        report(t="HB", st=status, ev=brain.evidence(now), cs=caller.state,
+               ll=int(caller.listen_left(now)), nc=int(caller.next_call_in(now)),
+               mic="muted" if muted else "on", prof=config.PROFILE)
+        # latest sensor readings, in their own small message
+        sn = {"t": "SN"}
         if sound:
-            hb["snd"] = loudest
+            sn["snd"] = loudest
+        if battery and battery.percent is not None:
+            sn["bat"] = battery.percent
         if co2 and co2.ppm is not None:
-            hb["co2"] = co2.ppm
-            hb["rh"] = round(co2.rh, 1)
-            hb["lvl"] = co2.level
+            sn["co2"] = co2.ppm
+            sn["rh"] = round(co2.rh, 1)
+            sn["lvl"] = co2.level
             hold = int(co2.levels.hold_left(now))
             if hold:
-                hb["hold"] = hold                  # lets the dashboard count down the evidence
+                sn["hold"] = hold                  # lets the dashboard count down the evidence
             if co2.baseline is not None:
-                hb["base"] = int(co2.baseline)
-                hb["rh_base"] = round(co2.rh_baseline, 1)
-        report(**hb)
+                sn["base"] = int(co2.baseline)
+                sn["rhb"] = round(co2.rh_baseline, 1)
+        report(**sn)
         loudest = 0
         next_hb = now + config.HEARTBEAT_INTERVAL
 
