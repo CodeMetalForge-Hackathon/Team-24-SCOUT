@@ -146,6 +146,30 @@ class CO2Sensor:
     def rh_baseline(self): return self.levels.rh_baseline
 
 
+class Battery:
+    """MAX17048 fuel gauge on the Feather (I2C 0x36). Read at most every 30 s.
+    .percent is None if there's no gauge or no battery."""
+    def __init__(self, i2c):
+        self.percent = None
+        self.last_read = None
+        self.gauge = None
+        try:
+            import adafruit_max1704x  # type: ignore
+            self.gauge = adafruit_max1704x.MAX17048(i2c)
+        except Exception as e:
+            print("Battery gauge not available (", e, ")")
+
+    def update(self, now):
+        if self.gauge is None or (self.last_read is not None and now - self.last_read < 30):
+            return
+        self.last_read = now
+        try:
+            p = self.gauge.cell_percent
+            self.percent = int(max(0, min(100, p))) if p is not None else None
+        except Exception:
+            self.percent = None
+
+
 class SoundSensor:
     """Grove Sound Sensor on an analog pin.
     'TAP'   = short AND very loud (knock)

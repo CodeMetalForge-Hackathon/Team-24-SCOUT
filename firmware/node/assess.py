@@ -146,6 +146,25 @@ class Assessor:
             return "slow CO2 build-up +%d ppm over %d min" % (d, int(secs / 60 + 0.5))
         return "sudden CO2 rise +%d ppm in %ds" % (d, secs)
 
+    def evidence(self, now):
+        """Compact snapshot of WHY the status is what it is (sent in ST / HB):
+          btn  none | first (waiting for 2nd press) | confirmed
+          snd  none | TAP | VOICE   (unprompted, within COMBINE_WINDOW)
+          co2  latest CO2 level, or NONE (no sensor / not yet)
+          resp 1 if the survivor answered a call within RESPONSE_WINDOW
+          miss calls in a row with no answer
+          dg   1 if the danger alarm is on"""
+        if self.confirmed_by:
+            btn = "confirmed"
+        elif self.awaiting_second(now):
+            btn = "first"
+        else:
+            btn = "none"
+        snd = self.activity_kind if self._recent(self.last_activity, now, self.COMBINE_WINDOW) else None
+        return {"btn": btn, "snd": snd or "none", "co2": self.co2_level or "NONE",
+                "resp": int(self._recent(self.last_response, now, self.RESPONSE_WINDOW)),
+                "miss": self.unanswered_calls, "dg": int(self.danger)}
+
     # ---- the rules, checked strongest first ----
     def evaluate(self, now):
         # 0. ARMING: just powered on, sensors still settling

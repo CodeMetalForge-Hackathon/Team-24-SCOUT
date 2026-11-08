@@ -5,7 +5,7 @@ import supervisor  # type: ignore
 import config
 from ui import UI
 from assess import Assessor, CONFIRMED, CO2_EVIDENCE
-from sensors import Button, Vibration, SoundSensor, CO2Sensor
+from sensors import Button, Vibration, SoundSensor, CO2Sensor, Battery
 from beeper import BeepPlayer
 from caller import Caller, CALLING, LISTENING
 
@@ -42,15 +42,22 @@ if config.ENABLE_SOUND:
     except Exception as e:
         print("Sound sensor not available (", e, ") - continuing without it")
 
+# I2C bus (STEMMA QT): CO2 sensor, battery gauge, GPS. board.I2C() fails if
+# nothing is plugged in (no pull-up resistors), so everything on it is optional.
+i2c = None
+try:
+    import board  # type: ignore
+    i2c = board.I2C()
+except Exception as e:
+    print("I2C not available (", e, ") - continuing without CO2 / GPS / battery")
+
 co2 = None
-if config.ENABLE_CO2:
-    try:
-        import board  # type: ignore
-        co2 = CO2Sensor(board.I2C(), config)
-    except Exception as e:           # board.I2C() fails if nothing is on the I2C wires
-        print("I2C not available (", e, ") - continuing without CO2")
-    if co2 is not None and not co2.ok:
+if config.ENABLE_CO2 and i2c is not None:
+    co2 = CO2Sensor(i2c, config)
+    if not co2.ok:
         co2 = None
+
+battery = Battery(i2c) if i2c is not None else None
 
 tilt = None
 if config.ENABLE_TILT:
@@ -81,12 +88,21 @@ def co2_note(now):
     return "CO2 %d (%s)%s" % (co2.ppm, signed(co2.ppm - co2.baseline), tag)
 
 
+MAX_MSG = 200   # bytes: keep every message small enough for one LoRa packet
+
+
 def report(**msg):
     """One JSON line for the base station. Over USB the dashboard reads these
     directly; later the radio sends the exact same text over LoRa.
     Normal debug prints have no { } so the dashboard ignores them."""
     msg["n"] = config.NODE_ID
-    print(json.dumps(msg))
+    try:
+        line = json.dumps(msg, separators=(",", ":"))   # no spaces: fewer bytes
+    except TypeError:                                   # older json without separators=
+        line = json.dumps(msg)
+    if len(line) > MAX_MSG:
+        print("WARNING: message is", len(line), "bytes (> %d)" % MAX_MSG)
+    print(line)
 
 
 def beep(name, now):
@@ -347,30 +363,34 @@ while True:
     if status != last_st[0] or (reason != last_st[1]
                                 and now - last_st_time >= config.ST_MIN_INTERVAL):
         print("STATUS:", status, "|", reason)
-        report(t="ST", st=status, why=reason)
+        report(t="ST", st=status, why=reason, ev=brain.evidence(now))
         last_st = (status, reason)
         last_st_time = now
 
-    if now >= next_hb:                           # "I'm alive" + latest readings
-        hb = {"t": "HB", "st": status, "why": reason, "dg": int(danger), "danger": danger,
-              "prof": config.PROFILE, "call_state": caller.state,
-              "listen_left": int(caller.listen_left(now)),
-              "next_call_in": int(caller.next_call_in(now)),
-              "calls_unanswered": brain.unanswered_calls,
-              "mic": "muted" if muted else "on"}
+    if battery:
+        battery.update(now)
+    if now >= next_hb:
+        # "I'm alive": status + evidence + call cycle (short keys: one LoRa packet)
+        report(t="HB", st=status, ev=brain.evidence(now), cs=caller.state,
+               ll=int(caller.listen_left(now)), nc=int(caller.next_call_in(now)),
+               mic="muted" if muted else "on", prof=config.PROFILE)
+        # latest sensor readings, in their own small message
+        sn = {"t": "SN"}
         if sound:
-            hb["snd"] = loudest
+            sn["snd"] = loudest
+        if battery and battery.percent is not None:
+            sn["bat"] = battery.percent
         if co2 and co2.ppm is not None:
-            hb["co2"] = co2.ppm
-            hb["rh"] = round(co2.rh, 1)
-            hb["lvl"] = co2.level
+            sn["co2"] = co2.ppm
+            sn["rh"] = round(co2.rh, 1)
+            sn["lvl"] = co2.level
             hold = int(co2.levels.hold_left(now))
             if hold:
-                hb["hold"] = hold                  # lets the dashboard count down the evidence
+                sn["hold"] = hold                  # lets the dashboard count down the evidence
             if co2.baseline is not None:
-                hb["base"] = int(co2.baseline)
-                hb["rh_base"] = round(co2.rh_baseline, 1)
-        report(**hb)
+                sn["base"] = int(co2.baseline)
+                sn["rhb"] = round(co2.rh_baseline, 1)
+        report(**sn)
         loudest = 0
         next_hb = now + config.HEARTBEAT_INTERVAL
 
