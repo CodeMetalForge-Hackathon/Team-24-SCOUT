@@ -43,9 +43,6 @@ flowchart TD
     MAC <--> UI["Local Dashboard"]
     SIM["Simulator"] --> MAC
 ```
-```
-
-Drone deployment is the intended operating method. Audio detection requires a connected microphone or sound sensor. The simulator provides test data independently of physical hardware.
 
 ## Hardware
 
