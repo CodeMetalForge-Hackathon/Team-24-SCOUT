@@ -8,7 +8,8 @@ import json
 
 STATUSES = ("NO SIGNS", "POSSIBLE", "LIKELY", "CONFIRMED", "UNRESPONSIVE")
 EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND", "CO2",
-          "CALL", "RESP", "BEEP", "DANGER")
+          "CALL", "RESP", "BEEP", "DANGER", "BOOT")
+BOOT_PARTS = ("sound", "co2", "gps", "button", "speaker")
 CO2_LEVELS = ("LEARNING", "NORMAL", "ELEVATED", "SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")
 CO2_EVIDENCE = ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")   # ELEVATED/NORMAL are info only
 PROFILES = ("DEMO", "FIELD")
@@ -122,6 +123,9 @@ def parse_line(line):
             return None, "RESP needs kind (TAP/VOICE)"
         elif e == "DANGER" and "on" not in msg:
             return None, "DANGER needs on (true/false)"
+        elif e == "BOOT":
+            parts = raw.get("sensors") if isinstance(raw.get("sensors"), dict) else {}
+            msg["sensors"] = {k: bool(parts[k]) for k in BOOT_PARTS if k in parts}
     return msg, None
 
 
@@ -245,6 +249,10 @@ def describe(msg, outgoing=False):
                 }.get(msg.get("p"), f"Node beeped ({msg.get('p')})")
     if e == "DANGER":
         return "Danger alarm ON" if msg["on"] else "Danger alarm off"
+    if e == "BOOT":
+        parts = msg.get("sensors", {})
+        missing = [k for k, ok in parts.items() if not ok]
+        return "Node started" + (f" (missing: {', '.join(missing)})" if missing else " (all parts OK)")
     if e == "SHIFT":
         return "PILE MOVEMENT detected: clear the area"
     if e == "ANS":

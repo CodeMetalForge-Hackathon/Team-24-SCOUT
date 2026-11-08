@@ -64,6 +64,7 @@ class Node:
         self.next_call_at = None    # when the next call is due
         self.calls_unanswered = 0
         self.mic = None             # "on" / "muted" (from the last heartbeat)
+        self.parts = None           # BOOT self-check: {"sound": True, "co2": False, ...}
         self.events = deque(maxlen=NODE_EVENTS)
 
     def to_dict(self, now):
@@ -86,7 +87,7 @@ class Node:
             "co2_marks": [[round(a, 1), round(b, 1)] for a, b in self.co2_marks],
             "call_state": self.call_state, "call_ts": self.call_ts,
             "listen_end": self.listen_end, "next_call_at": self.next_call_at,
-            "calls_unanswered": self.calls_unanswered, "mic": self.mic,
+            "calls_unanswered": self.calls_unanswered, "mic": self.mic, "parts": self.parts,
             "events": list(self.events),
         }
 
@@ -163,6 +164,8 @@ class State:
                 nd.answers[msg["q"]] = msg["a"]
             elif msg["e"] == "DANGER":
                 nd.danger = msg["on"]
+            elif msg["e"] == "BOOT":
+                nd.parts = msg.get("sensors")
             elif msg["e"] == "CALL":
                 nd.call_state, nd.call_ts = "CALLING", ts
                 nd.listen_end = ts + CALL_AUDIO + LISTEN_SECS       # estimate until the next HB

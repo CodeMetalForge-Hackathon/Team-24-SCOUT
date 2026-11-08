@@ -183,3 +183,12 @@ class CallMessages(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_command({"t": "DANGER", "n": 1})
         self.assertIn("ON (test)", describe({"t": "DANGER", "n": 1, "on": True}, outgoing=True))
+
+
+class BootMessage(unittest.TestCase):
+    def test_boot_self_check(self):
+        msg, err = parse_line('{"t":"EV","n":1,"e":"BOOT","sensors":{"sound":true,"co2":true,"gps":false,'
+                              '"button":true,"speaker":true,"laser":true}}')
+        self.assertIsNone(err)
+        self.assertNotIn("laser", msg["sensors"])          # unknown parts ignored
+        self.assertEqual(describe(msg), "Node started (missing: gps)")
