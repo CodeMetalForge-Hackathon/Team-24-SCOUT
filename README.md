@@ -27,23 +27,22 @@ This is a hackathon prototype, not a validated rescue or life-safety instrument.
 
 ```mermaid
 flowchart TD
-    DRONE["Drone Deployment"] -.->|"Places node at search location"| ESP
+    DRONE["Drone Deployment"] -.->|"Drops sensor node"| ESP
 
     subgraph NODE["SCOUT Sensor Node"]
-        CO2["CO₂ Sensor"] --> ESP["ESP32-S3<br>Sensor Processing and Event Logic"]
-        MIC["Microphone / Sound Sensor"] --> ESP
+        CO2["CO₂ Sensor"] --> ESP["ESP32-S3"]
+        MIC["Microphone / Sound Sensor, if fitted"] --> ESP
         BTN["Push Button"] --> ESP
-        ESP --> SPK["Grove Speaker<br>Beep Signals"]
+        ESP --> SPK["Grove Speaker: Beeps"]
         BAT["Battery"] --> ESP
-        ESP <-->|"Sensor Data / Commands"| RADIO["LoRa Radio"]
+        ESP <--> RADIO["Node LoRa Radio"]
     end
 
-    RADIO <-->|"Wireless LoRa Link"| RX["Base-Station LoRa Receiver"]
-    RX <-->|"USB Serial"| SERVER["Mac / Raspberry Pi<br>FastAPI Service"]
-
-    SIM["Simulator<br>Software Testing"] --> SERVER
-    SERVER --> DB[("SQLite<br>Event Log")]
-    SERVER <-->|"Live Updates / Commands"| UI["Local Dashboard<br>Readings · Alerts · Node Controls"]
+    RADIO <-->|"Wireless readings and commands"| RX["LoRa Receiver"]
+    RX <-->|"USB Serial"| MAC["Mac: Base-Station Software"]
+    MAC <--> UI["Local Dashboard"]
+    SIM["Simulator"] --> MAC
+```
 ```
 
 Drone deployment is the intended operating method. Audio detection requires a connected microphone or sound sensor. The simulator provides test data independently of physical hardware.
