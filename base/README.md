@@ -248,8 +248,9 @@ an acknowledgement, a reset or a pause made on one screen appears on all of them
 Use the sun / moon button to switch between day and night mode.
 
 **Pause all nodes (demo):** top-bar menu → *Pause all nodes*. Every node stops sensing, calling, beeping and
-reporting (screen: PAUSED (DEMO), LEDs off) and only sends "I'm paused" every 30 s, so it shows as PAUSED rather than
-LOST. Click the blue *PAUSED · resume* badge (or the menu) to resume; nodes report their status again at once.
+reporting (screen: PAUSED (DEMO), LEDs off) and only sends "I'm paused" every 30 s, so it isn't marked LOST.
+Pausing clears every node's evidence: all nodes show **NO SIGNS** (marked "paused (demo)") and, after you resume
+(blue *PAUSED · resume* badge or the menu), they stay at NO SIGNS until something new and real happens.
 
 **Sound chart** (detail panel): the Grove sound sensor measures *loudness*, not pitch. The chart shows the loudest
 sound every 10 s, the room's learned quiet level (shaded), the voice threshold (dashed) and the knock threshold
@@ -265,8 +266,9 @@ sound every 10 s, the room's learned quiet level (shaded), the voice threshold (
 
 Before anything is deleted it is **archived** to `base/archive/<incident>_<node1|all>_<date-time>.json` and `.csv`
 (not committed to git). The live log keeps one audit line, e.g. *"Node 1 fully reset by Ana at 00:12
-(archived: …)"*. After a full reset the node shows RESTARTING until its BOOT arrives; after 30 s without
-one: *"Reset sent, node not responding: check power"*.
+(archived: …)"*. After a full reset the node shows RESTARTING until it reports again (its BOOT, or, if the base
+missed that while the USB port was re-opening, its next status or heartbeat); readings sent just before the restart are
+ignored. After 30 s without anything: *"Reset sent, node not responding: check power"*.
 
 ## API
 

@@ -211,6 +211,8 @@ class SimSource(Source):
 
     # ---------- survivor actions ----------
     def press(self, node):
+        if node.paused:
+            return
         now = time.monotonic()
         node.caller.cancel(now)
         stage = node.brain.button_press(now)
@@ -237,6 +239,8 @@ class SimSource(Source):
         self.emit(node, t="EV", e=kind)
 
     def set_danger(self, node, on):
+        if node.paused:
+            return
         now = time.monotonic()
         node.danger_cmd = on
         node.brain.set_danger(on)
@@ -336,6 +340,7 @@ class SimSource(Source):
             self.later(0.3, do_reset)
         elif t == "REBOOT":                      # full reset: the node restarts
             self.emit(node, t="EV", e="REBOOTING")
+            node.alive = False                   # restarting: silent until it boots
 
             def do_reboot():
                 if cmd.get("keep_gps", True):
@@ -358,6 +363,11 @@ class SimSource(Source):
                 if cmd["on"] != node.paused:
                     node.paused = cmd["on"]
                     node.caller.reset(now)
+                    # like the board: pause and resume wipe the evidence (NO SIGNS)
+                    node.brain.reset("paused by base" if cmd["on"] else "no evidence yet")
+                    node.co2.clear_event()
+                    if cmd["on"]:
+                        self.emit(node, t="ST", st="NO SIGNS", why="paused by base", ev=node.brain.evidence(now))
                     node.call_audio_end = node.siren_until = 0
                     node.next_hb = now                    # paused HB / normal HB right away
                     node.last_st = (None, None)

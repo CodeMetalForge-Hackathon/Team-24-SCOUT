@@ -60,8 +60,6 @@
   .badge { font-weight: 800; font-size: 13px; letter-spacing: .04em; padding: 4px 8px; border-radius: 6px;
     border: 1px solid var(--line); white-space: nowrap; }
   .badge.offline { background: var(--blue); color: #fff; border-color: var(--blue); }
-  .summary { font-weight: 650; }
-  .summary b { color: var(--unresp); }
   .spacer { flex: 1; }
   .link { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 14px; }
   .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--none); flex: none; }
@@ -237,7 +235,6 @@
   <span id="profile" class="badge" hidden></span>
   <button id="pausedBadge" class="badge btn small" hidden title="All nodes are paused for a demo. Click to resume.">
     <svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg> PAUSED · resume</button>
-  <span id="summary" class="summary"></span>
   <button id="alertCount" class="badge btn small" title="Unacknowledged alerts">0 alerts</button>
   <span class="spacer"></span>
   <span class="link" title="Data link to the nodes"><span id="linkDot" class="dot"></span><span id="linkText">–</span></span>
@@ -401,8 +398,9 @@
   </div>
   <div class="opt danger">
     <h3>Full reset (this node)</h3>
-    <p>The node restarts (arming, CO₂ baseline re-learned). Its dashboard history (timeline, chart,
-      alerts, messages, manual location) is <b>archived</b> to <code>base/archive/</code>, then cleared.</p>
+    <p>Restarts the node: it starts from scratch at NO SIGNS (10 s start-up, CO₂ re-learns the room).
+      This node's history on the dashboard (timeline, charts, alerts, messages, manual location) is
+      saved to a file in <b>base/archive</b> first, then cleared from the screen.</p>
     <div class="checks">
       <label><input type="checkbox" id="rdKeepGps" checked> Keep the GPS last known fix</label>
     </div>
@@ -487,7 +485,6 @@ function load(key) { try { return localStorage.getItem(key); } catch (e) { retur
 
 function statusOf(nd) {
   if (nd.pending_reboot) return "RESTARTING";              // until the node's BOOT arrives
-  if (nd.paused) return "PAUSED";                          // demo pause (node still says "I'm here" every 30 s)
   return now() - nd.last_seen > LOST_AFTER ? "LOST" : (nd.last_status || nd.status);
 }
 function restartText(nd) {
@@ -514,9 +511,6 @@ const fmtDist = (m) => m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(2
 // ======================= top bar =======================
 function renderTop() {
   const list = [...nodes.values()];
-  const attention = list.filter((nd) => ["UNRESPONSIVE", "CONFIRMED", "LIKELY", "LOST"].includes(statusOf(nd)) || nd.danger).length;
-  $("summary").innerHTML = `${list.length} node${list.length === 1 ? "" : "s"} · ` +
-    (attention ? `<b>${attention} need${attention === 1 ? "s" : ""} attention</b>` : "none need attention");
   const un = alerts.filter((a) => !a.acked_at).length;
   $("alertCount").innerHTML = `${ic("bell")} ${un} unacknowledged`;
   $("alertCount").className = "badge btn small" + (un ? " hot" : "");
@@ -569,7 +563,7 @@ function renderTriage() {
     return `<tr data-n="${nd.n}" tabindex="0" class="s-row-${cls(st)}${nd.n === selected ? " sel" : ""}" title="${esc(GUIDE[st])}">
       <td><span class="chip s-${cls(st)}">${ic(ICON[st])} ${st}</span>${nd.danger && st !== "LOST" ? ` <span class="chip danger">${ic("danger")} DANGER</span>` : ""}</td>
       <td><span class="nodeid">N${nd.n}</span>${m.tag ? `<span class="tag">${esc(m.tag)}</span>` : ""}</td>
-      <td class="why">${esc(st === "PAUSED" ? "paused for a demo" : st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `silent for ${ago(now() - nd.last_seen).replace(" ago", "")} · was ${nd.last_status}` : nd.why)}</td>
+      <td class="why">${esc(nd.paused ? "paused (demo)" : st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `silent for ${ago(now() - nd.last_seen).replace(" ago", "")} · was ${nd.last_status}` : nd.why)}</td>
       <td class="hide-sm">${locBadge(nd)}</td>
       <td class="num">${ago(now() - nd.last_seen)}</td>
       <td class="hide-md num">${nd.bat != null ? Math.round(nd.bat) + "%" : "–"}</td>
@@ -598,10 +592,6 @@ function evidenceLines(nd) {
   const co2 = ev.co2 || nd.lvl || "NONE";
   add(CO2_EVIDENCE.includes(co2), `CO₂: ${CO2_TEXT[co2] || co2}`);
   add(!!ev.resp, ev.resp ? "Answered a call recently" : "No recent answer to calls");
-  const miss = ev.miss ?? nd.calls_unanswered ?? 0;
-  // missed calls only count (towards UNRESPONSIVE) together with CO2 evidence
-  add(miss >= 2 && CO2_EVIDENCE.includes(co2), `Missed calls in a row: ${miss}` + (miss >= 2 && !CO2_EVIDENCE.includes(co2) ? " (no CO₂ sign, so not UNRESPONSIVE)" : ""));
-  add(!!nd.danger, nd.danger ? "Danger alarm ON (does not change the status)" : "No danger alarm");
   if (st === "LOST") out.unshift(`<li class="on"><span class="mk">${ic("x")}</span><span>No message for ${ago(now() - nd.last_seen).replace(" ago", "")}: node may be off or out of range</span></li>`);
   if (!nd.ev) out.push(`<li><span class="mk"></span><span class="muted">(this node doesn't send an evidence snapshot)</span></li>`);
   return out.join("");
@@ -611,7 +601,7 @@ function callText(nd) {
   const st = statusOf(nd), t = now();
   const c = (text) => `${ic("call")} ${text}`;
   if (st === "LOST" || st === "RESTARTING") return c("–");
-  if (st === "PAUSED") return `${ic("pause")} Paused (demo): no calls`;
+  if (nd.paused) return `${ic("pause")} Paused (demo): no calls`;
   if (st === "CONFIRMED") return c("Calls stopped (confirmed)");
   if ((nd.ev && nd.ev.btn === "first") || /^pressed once/.test(nd.why || "")) return c("Calls paused (waiting for 2nd press)");
   if (nd.call_state === "CALLING" && nd.call_ts && t - nd.call_ts < CALL_AUDIO) return c("Calling…");
@@ -639,7 +629,7 @@ function renderDetail() {
   let why = nd.why || "";
   const cd = /\((\d+)s\)$/.exec(why);
   if (cd && nd.why_ts) why = why.replace(/\(\d+s\)$/, `(${Math.max(0, cd[1] - Math.floor(t - nd.why_ts))}s)`);
-  $("dReason").textContent = st === "PAUSED" ? "paused for a demo" : st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `Last status: ${nd.last_status}: ${why}` : why;
+  $("dReason").textContent = nd.paused ? "Paused (demo): not sensing, calling or reporting until resumed" : st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `Last status: ${nd.last_status}: ${why}` : why;
   $("dSince").textContent = `${st === "LOST" ? "Last heard" : "Status since"} ${hms(st === "LOST" ? nd.last_seen : nd.status_since)}` +
     ` · heard ${ago(t - nd.last_seen)}` + (nd.bat != null ? ` · battery ${Math.round(nd.bat)}%` : "");
   $("dAck").hidden = !unackedFor(nd.n).length;

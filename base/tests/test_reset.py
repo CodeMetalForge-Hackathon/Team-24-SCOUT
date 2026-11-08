@@ -117,3 +117,33 @@ class ResetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BootMissed(unittest.TestCase):
+    """A board restarting on USB often prints BOOT before the base re-opens the port."""
+    def test_heartbeat_after_reset_counts_as_back(self):
+        from base.state import State
+        from base.protocol import parse_line
+        s = State()
+        s.apply(parse_line('{"t":"HB","n":1,"st":"POSSIBLE"}')[0], 1)
+        s.reset_node(1, 100)
+        s.apply(parse_line('{"t":"EV","n":1,"e":"REBOOTING"}')[0], 100.2)
+        s.apply(parse_line('{"t":"HB","n":1,"st":"POSSIBLE"}')[0], 100.5)     # in flight before the restart
+        self.assertIsNotNone(s.snapshot(101)[1]["pending_reboot"])
+        s.apply(parse_line('{"t":"HB","n":1,"st":"NO SIGNS"}')[0], 112)       # BOOT was missed; HB arrives
+        self.assertIsNone(s.snapshot(113)[1]["pending_reboot"])
+
+
+class InFlightAfterReset(unittest.TestCase):
+    def test_old_readings_do_not_refill_a_reset_node(self):
+        from base.state import State
+        from base.protocol import parse_line
+        s = State()
+        s.apply(parse_line('{"t":"SN","n":1,"co2":1250,"base":810,"lvl":"BREATHING","hold":45}')[0], 1)
+        s.reset_node(1, 100)
+        s.apply(parse_line('{"t":"SN","n":1,"co2":1254,"base":810,"lvl":"BREATHING","hold":44}')[0], 100.8)
+        nd = s.snapshot(101)[1]
+        self.assertEqual((nd["co2_hist"], nd["lvl"], nd["hold_until"]), ([], None, None))
+        s.apply(parse_line('{"t":"EV","n":1,"e":"BOOT","sensors":{}}')[0], 102)
+        s.apply(parse_line('{"t":"SN","n":1,"co2":808,"lvl":"LEARNING"}')[0], 103)
+        self.assertEqual(s.snapshot(104)[1]["co2_hist"], [[103, 808, None]])

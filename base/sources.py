@@ -61,7 +61,7 @@ class SerialSource(Source):
                         self.on_line(line)
             except Exception as exc:  # unplugged, wrong port, permission...
                 self._set_status(False, f"receiver not connected ({exc.__class__.__name__})")
-                log.warning("serial %s: %s; retrying in 2 s", self.port, exc)
+                log.warning("serial %s: %s; retrying", self.port, exc)
             finally:
                 if self.ser is not None:
                     try:
@@ -69,7 +69,7 @@ class SerialSource(Source):
                     except Exception:
                         pass
                     self.ser = None
-            self._stop.wait(2)
+            self._stop.wait(0.5)        # quick: a node restarting on USB comes back in ~1-2 s
 
     def send(self, cmd):
         data = (json.dumps(cmd, separators=(",", ":")) + "\n").encode()

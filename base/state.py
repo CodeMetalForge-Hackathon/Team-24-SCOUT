@@ -138,6 +138,17 @@ class State:
         """Update a node from one parsed message. Returns a timeline event or None."""
         nd = self.node(msg["n"], ts)
         nd.last_seen = max(nd.last_seen, ts)
+        # Just after a full reset, readings the node sent BEFORE it restarted may
+        # still arrive: don't let them refill the cleared history (charts, CO2 hold...).
+        if (nd.pending_reboot is not None and ts - nd.pending_reboot <= 1.5
+                and msg.get("e") not in ("BOOT", "REBOOTING")):
+            return None
+        # After a full reset the node is back when its BOOT arrives, or, because a
+        # restarting board on USB often prints BOOT before the base has re-opened the
+        # port, when any status / heartbeat / reading arrives more than 1.5 s later.
+        if (nd.pending_reboot is not None and msg["t"] in ("ST", "HB", "SN")
+                and ts - nd.pending_reboot > 1.5):
+            nd.pending_reboot = None
         # same status, only the numbers in the reason changed (countdown, CO2 delta):
         # update the card, not the timeline
         tick = (msg["t"] == "ST" and msg.get("st") == nd.status
