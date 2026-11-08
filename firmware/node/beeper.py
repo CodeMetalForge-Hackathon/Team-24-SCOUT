@@ -68,6 +68,12 @@ class BeepPlayer:
             self.quiet_until = max(self.quiet_until, now + self.mic_tail)
         self.name = None
 
+    def silence(self, now):
+        """Stop at once AND un-mute the mic now (used by the base's RESET)."""
+        self._set(on=False)
+        self.name = None
+        self.quiet_until = now
+
     def _start_step(self, now):
         if self.i >= len(self.steps):                     # pattern finished
             self.stop(now)

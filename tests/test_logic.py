@@ -330,3 +330,36 @@ def test_evidence_snapshot_explains_status():
     assert ev == {"btn": "none", "snd": "TAP", "co2": "BREATHING", "resp": 0, "miss": 2, "dg": 0}
     b.button_press(25)
     assert b.evidence(26)["btn"] == "first"
+
+
+# ---------------------------------------------------------------- reset (base "Clear status")
+
+def test_reset_returns_to_no_signs_and_old_evidence_cannot_come_back():
+    b = armed()
+    b.activity(20, "TAP")                       # would be POSSIBLE until 35
+    breathing(b, 21)                             # would be POSSIBLE until new CO2 reading
+    b.button_press(22)                           # countdown until 42, then "single press" until 57
+    b.call_response(23, "VOICE")                 # would be LIKELY until 83
+    b.no_response(24)
+    b.reset("status cleared by base")
+    for t in (25, 30, 40, 45, 60, 80, 200):      # every old window would still be open
+        assert b.evaluate(t) == ("NO SIGNS", "status cleared by base")
+    assert b.evidence(25) == {"btn": "none", "snd": "none", "co2": "NONE", "resp": 0, "miss": 0, "dg": 0}
+
+
+def test_after_reset_new_evidence_counts_normally():
+    b = armed()
+    b.activity(20, "TAP")
+    b.reset("status cleared by base")
+    b.activity(30, "VOICE")
+    assert b.evaluate(31) == ("POSSIBLE", "heard voice")
+    assert b.evaluate(50) == ("NO SIGNS", "no evidence yet")    # normal wording again
+
+
+def test_reset_is_not_rearming_and_keeps_danger():
+    b = armed()
+    b.set_danger(True)
+    b.reset("status cleared by base")
+    b.activity(20, "TAP")                        # no arming phase after a clear
+    assert b.evaluate(21)[0] == "POSSIBLE"
+    assert b.danger

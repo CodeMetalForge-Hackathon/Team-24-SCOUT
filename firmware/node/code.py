@@ -64,6 +64,7 @@ battery = Battery(i2c) if i2c is not None else None
 loc = Location(live_secs=config.GPS_LIVE_SECS)
 gps = GPSReader(i2c) if (config.ENABLE_GPS and i2c is not None) else None
 nvm = None
+microcontroller = None
 try:
     import microcontroller  # type: ignore
     nvm = microcontroller.nvm
@@ -148,7 +149,7 @@ cmd_buf = ""
 
 
 def handle_command(line, now):
-    global message_text, message_until, prompt_until
+    global message_text, message_until, prompt_until, mic_was_ignored
     start = line.find("{")
     if start < 0:
         return                                   # someone typing in the console
@@ -161,10 +162,32 @@ def handle_command(line, now):
         return                                   # not for this node
     t = cmd.get("t")
     if t == "RESET":
-        print("COMMAND: reset by base (false alarm)")
-        brain.reset()                            # LEDs go back to slow blink below
-        caller.reset(now)
+        # "Clear status": forget all evidence and counters, keep sensor baselines
+        print("COMMAND: status cleared by base (false alarm)")
+        brain.reset("status cleared by base")   # NO SIGNS; LEDs go back to slow blink below
+        caller.reset(now)                        # IDLE, next call one interval away
+        beeper.silence(now)                      # stop any beep and un-mute the mic now
+        if sound:
+            sound.reset_run()
+        mic_was_ignored = False
         prompt_until = 0
+        message_until = 0
+    elif t == "REBOOT":
+        # "Full reset": a clean restart (arming, CO2 baseline re-learned, BOOT sent)
+        keep_gps = cmd.get("keep_gps", True) is not False
+        print("COMMAND: reboot by base, keep GPS fix:", keep_gps)
+        report(t="EV", e="REBOOTING")
+        time.sleep(0.3)                          # let the reply get out before we restart
+        if not keep_gps and nvm is not None:
+            try:
+                nvm[0] = 0                       # mark the saved last fix invalid
+                print("Saved GPS fix cleared")
+            except Exception as e:
+                print("Could not clear the saved fix (", e, ")")
+        beeper.silence(now)
+        if microcontroller is not None:
+            microcontroller.reset()              # never returns
+        print("REBOOT not possible here (no microcontroller module)")
     elif t == "MSG":
         message_text = str(cmd.get("txt", ""))[:60]
         message_until = now + config.MESSAGE_SECS
