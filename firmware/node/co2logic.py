@@ -109,5 +109,8 @@ class CO2Levels:
             self.trend_rise = 0
             return False
         self.trend_rise = t[-1][1] - t[0][1]
-        ups = sum(1 for i in range(1, len(t)) if t[i][1] >= t[i - 1][1])
-        return self.trend_rise >= self.trend_ppm and ups >= 0.7 * (len(t) - 1)
+        steps = [t[i][1] - t[i - 1][1] for i in range(1, len(t))]
+        ups = sum(1 for s in steps if s >= 0)
+        # "slow" means steady: a single big jump is a breath/draft, not a build-up
+        steady = max(steps) <= self.trend_ppm / 2
+        return self.trend_rise >= self.trend_ppm and ups >= 0.7 * len(steps) and steady
