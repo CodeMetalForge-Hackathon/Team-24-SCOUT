@@ -51,11 +51,21 @@ should use, e.g. `http://192.168.1.20:8000`. On a Mac, click **Allow** if the fi
 Options: `--http-port 8000`, `--baud 115200`, `--db path.db`, `--one-node` (simulator with node 1 only).
 
 ### What the simulator does
-The fake nodes run the **real node logic** (`firmware/node/assess.py`), so statuses and countdowns
-match the board exactly. Node 1 loops a ~120 s story: hears a voice → POSSIBLE → an
-**accidental single press** → LIKELY countdown → expires to POSSIBLE "single press, not confirmed"
-→ knocking → a real press + second press → CONFIRMED → answers injured=yes, count=2 → pile shift
-(DANGER) → stuck button → restart. Node 2 stays NO SIGNS. The buttons work:
+The fake nodes run the **real node logic** (`firmware/node/assess.py` and `co2logic.py`, DEMO
+profile), so statuses, CO2 levels and countdowns match the board exactly; only the raw sensor
+values are invented. Node 1 loops a ~6.5 min story (CO2 baseline learned in the first 30 s):
+
+| Time | What happens | Status |
+|---|---|---|
+| 6 s | hears a voice | POSSIBLE "heard voice" |
+| 25 s | **accidental single press** | LIKELY countdown → POSSIBLE "single press, not confirmed" |
+| 40–150 s | room CO2 drifts up (+2 ppm/s, people arriving) | only "CO2 high but steady (room air?)": **no status change** |
+| 175 s | breathing burst on the sensor | POSSIBLE "breathing detected …" at ~183 s, chart shaded, "evidence expires in N s" |
+| ~250 s | hold time over | "CO2 evidence expired" → NO SIGNS |
+| 270 + 285 s | breathing again + knocking | **LIKELY "breathing + knocking"** |
+| 345 / 353 s | press, press again | **CONFIRMED** → answers → pile shift → stuck button |
+
+Node 2 stays NO SIGNS. The buttons work:
 **Call now** gets taps back after 3 s (node 2 stays silent and reports "no answer" after 10 s),
 **Ask** gets an answer after 3 s, and **Reset** clears the node and restarts its story.
 
@@ -107,7 +117,8 @@ Node → base (the receiver adds `rssi`). Lines that aren't valid are logged and
 
 | Line | Meaning |
 |---|---|
-| `{"t":"HB","n":1,"st":"POSSIBLE","why":"CO2 rising","co2":812,"base":640,"bat":87,"dg":0,"rssi":-48}` | heartbeat, every 10 s (demo) / 30 s |
+| `{"t":"HB","n":1,"st":"POSSIBLE","why":"sudden CO2 rise +240 ppm in 10s","co2":1050,"base":810,"rh":49.5,"rh_base":48.1,"lvl":"SUDDEN_RISE","hold":42,"prof":"DEMO","dg":0,"rssi":-48}` | heartbeat, every 10 s (DEMO) / 30 s (FIELD); `hold` = seconds of CO2 evidence left |
+| `{"t":"EV","n":1,"e":"CO2","lvl":"BREATHING","prev":"NORMAL","rise":380,"secs":10,"rh_jump":6,"hold":60,"base":810}` | CO2 level changed: LEARNING / NORMAL / ELEVATED (info only) / SUDDEN_RISE / BREATHING / SLOW_BUILDUP (FIELD). See [docs/co2.md](../docs/co2.md) |
 | `{"t":"ST","n":1,"st":"LIKELY","why":"pressed once - press again (14s)"}` | status changed (countdown ticks at most every 5 s; the page counts down in between) |
 | `{"t":"EV","n":1,"e":"BTN","stage":"first"}` | PRESS ME pressed once: waiting for a 2nd press within 20 s |
 | `{"t":"EV","n":1,"e":"BTN","stage":"confirmed"}` | pressed twice: **survivor confirmed** (alert sound) |
@@ -145,7 +156,7 @@ Statuses: `NO SIGNS`, `POSSIBLE`, `LIKELY`, `CONFIRMED`, `UNRESPONSIVE`. The das
 | `db.py` | SQLite log: `events(ts, node, type, dir, raw)` |
 | `sources.py` | `SerialSource`: reads the receiver in a background thread, reconnects |
 | `simulator.py` | `SimSource`: the fake demo nodes |
-| `node_brain.py` | loads `firmware/node/assess.py` so the simulator and tests use the real node rules |
+| `node_brain.py` | loads `firmware/node/assess.py` and `co2logic.py` so the simulator and tests use the real node rules |
 | `static/index.html` | the dashboard (vanilla JS, canvas chart) |
 
 Logs: `base/events.db` (serial) and `base/events_sim.db` (simulator, kept separate so fake
