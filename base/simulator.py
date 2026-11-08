@@ -104,6 +104,9 @@ class SimNode:
         self.next_fix = now
         self.last_loc_src = None
         self.booted = False                      # BOOT message still to send
+        self.paused = False                      # demo pause from the dashboard
+        self.loudest = 0                         # loudest sound since the last heartbeat
+        self.floor = random.uniform(12000, 13500)   # the room's quiet level (like the Grove sensor)
 
     def muted(self, now):
         return now < self.call_audio_end or now < self.siren_until
@@ -157,7 +160,12 @@ class SimSource(Source):
         self.emit(node, t="HB", st=st, ev=node.brain.evidence(now), cs=node.caller.state,
                   ll=int(node.caller.listen_left(now)), nc=int(node.caller.next_call_in(now)),
                   mic="muted" if node.muted(now) else "on", prof=PROFILE)
-        sn = {"t": "SN", "bat": round(node.bat)}
+        # sound: the room's background plus any knock / voice since the last heartbeat
+        node.floor += random.uniform(-150, 150)
+        loud = max(node.loudest, int(node.floor + random.uniform(1500, 3000)))
+        node.loudest = 0
+        sn = {"t": "SN", "bat": round(node.bat), "snd": loud, "nf": int(node.floor),
+              "vt": int(max(14000, node.floor + 4000)), "tt": int(max(22000, node.floor + 8000))}
         c = node.co2
         if c.ppm is not None:
             sn.update(co2=round(c.ppm), rh=round(c.rh, 1), lvl=c.level)
@@ -213,6 +221,9 @@ class SimSource(Source):
     def sound(self, node, kind):
         """The mic heard a knock / voice: an answer while listening, else unprompted."""
         now = time.monotonic()
+        if node.paused:
+            return
+        node.loudest = max(node.loudest, 62000 if kind == "TAP" else random.randint(26000, 34000))
         if node.muted(now) or now < node.arm_until:
             return                               # own beeps / still arming: ignored, like the board
         if node.caller.state == caller_mod.LISTENING:
@@ -341,6 +352,17 @@ class SimSource(Source):
             self.later(0.3, lambda: self.emit(node, t="EV", e="BEEP", p="MESSAGE"))
         elif t == "DANGER":
             self.later(0.3, lambda: self.set_danger(node, cmd["on"]))
+        elif t == "PAUSE":
+            def do_pause():
+                now = time.monotonic()
+                if cmd["on"] != node.paused:
+                    node.paused = cmd["on"]
+                    node.caller.reset(now)
+                    node.call_audio_end = node.siren_until = 0
+                    node.next_hb = now                    # paused HB / normal HB right away
+                    node.last_st = (None, None)
+                self.emit(node, t="EV", e="PAUSE", on=node.paused)
+            self.later(0.3, do_pause)
         elif t == "SETLOC":
             self.later(0.3, lambda: node.loc.set_manual(time.monotonic(), cmd["lat"], cmd["lon"], cmd.get("label", "")))
         elif t == "ASK" and node is self.n1:
@@ -382,6 +404,11 @@ class SimSource(Source):
                         node.booted = True
                         self.emit(node, t="EV", e="BOOT", sensors={"sound": True, "co2": True, "gps": node.has_gps,
                                                                    "button": True, "speaker": True})
+                    if node.paused:                     # demo pause: only "I'm paused" every 30 s
+                        if now >= node.next_hb:
+                            self.emit(node, t="HB", st="NO SIGNS", paused=1)
+                            node.next_hb = now + 30
+                        continue
                     node.drift(dt)
                     self.fake_gps(node, now)
                     if now >= node.next_co2:

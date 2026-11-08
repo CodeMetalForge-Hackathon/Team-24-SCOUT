@@ -304,6 +304,20 @@ class Hub:
         self._push(self.full())
         return archived, not_reached
 
+    async def pause_all(self, on, by):
+        """Demo: pause (or resume) every node. Unreachable nodes are skipped."""
+        by = (by or "").strip()[:30] or "Operator"
+        not_reached = []
+        for n in sorted(self.state.nodes):
+            try:
+                await asyncio.to_thread(self.source.send, {"t": "PAUSE", "n": n, "on": bool(on)})
+            except Exception:
+                not_reached.append(n)
+        self.db.set_kv("paused", bool(on))
+        self.note(None, f"All nodes {'paused (demo)' if on else 'resumed'} by {by}", "system")
+        self._push({"type": "meta", "meta": self.db.get_kv()})
+        return not_reached
+
     # ---------- outgoing ----------
     async def command(self, cmd):
         cmd = validate_command(cmd)            # ValueError -> 400
@@ -462,6 +476,17 @@ def create_app(source, db_path, defaults=None):
             log.warning("full reset failed: %s", exc)
             return bad(f"could not reach the node: {exc}", 503)
         return {"ok": True, "archived": archived}
+
+    @app.post("/api/pause")
+    async def api_pause(request: Request):
+        """Demo: {"on": true, "by": "Ana"} pauses every node, {"on": false} resumes."""
+        try:
+            body = await _json_body(request)
+            if not isinstance(body.get("on"), bool):
+                raise ValueError("on must be true or false")
+        except ValueError as exc:
+            return bad(str(exc))
+        return {"ok": True, "not_reached": await hub.pause_all(body["on"], body.get("by"))}
 
     @app.post("/api/new_incident")
     async def api_new_incident(request: Request):

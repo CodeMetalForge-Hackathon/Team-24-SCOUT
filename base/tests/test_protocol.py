@@ -232,3 +232,14 @@ class LocationMessages(unittest.TestCase):
         for bad in ({"lat": 91, "lon": 0}, {"lat": 0, "lon": 181}, {"lat": "x", "lon": 0}):
             with self.assertRaises(ValueError):
                 validate_command({"t": "SETLOC", "n": 1, **bad})
+
+
+class PauseMessages(unittest.TestCase):
+    def test_pause(self):
+        self.assertEqual(validate_command({"t": "PAUSE", "n": 1, "on": True}), {"t": "PAUSE", "n": 1, "on": True})
+        with self.assertRaises(ValueError):
+            validate_command({"t": "PAUSE", "n": 1})
+        msg, err = parse_line('{"t":"EV","n":1,"e":"PAUSE","on":false}')
+        self.assertIsNone(err)
+        self.assertEqual(describe(msg), "Node resumed")
+        self.assertEqual(parse_line('{"t":"HB","n":1,"paused":1}')[0]["paused"], 1)

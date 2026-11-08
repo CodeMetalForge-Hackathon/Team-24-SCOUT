@@ -8,7 +8,7 @@ import json
 
 STATUSES = ("NO SIGNS", "POSSIBLE", "LIKELY", "CONFIRMED", "UNRESPONSIVE")
 EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND", "CO2",
-          "CALL", "RESP", "BEEP", "DANGER", "BOOT", "REBOOTING")
+          "CALL", "RESP", "BEEP", "DANGER", "BOOT", "REBOOTING", "PAUSE")
 BOOT_PARTS = ("sound", "co2", "gps", "button", "speaker")
 CO2_LEVELS = ("LEARNING", "NORMAL", "ELEVATED", "SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")
 CO2_EVIDENCE = ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")   # ELEVATED/NORMAL are info only
@@ -29,7 +29,9 @@ _NUMERIC = {"co2": float, "base": float, "bat": float, "rssi": float,
             "rh_jump": float,                       # CO2 event: humidity jump (points)
             "hold": int,                            # seconds of CO2 evidence left
             "listen_left": int, "next_call_in": int, # call cycle (HB)
-            "calls_unanswered": int}
+            "calls_unanswered": int,
+            "nf": int, "vt": int, "tt": int,        # sound: room noise floor, voice / knock thresholds
+            "paused": int}                          # HB from a node paused for a demo
 # Optional text fields: name -> allowed values. Unknown values are dropped.
 _CHOICES = {"lvl": CO2_LEVELS, "prev": CO2_LEVELS, "prof": PROFILES,
             "kind": SOUND_KINDS, "p": BEEPS, "call_state": CALL_STATES, "mic": ("on", "muted")}
@@ -164,8 +166,8 @@ def parse_line(line):
             return None, "CO2 event needs a known lvl"
         elif e == "RESP" and "kind" not in msg:
             return None, "RESP needs kind (TAP/VOICE)"
-        elif e == "DANGER" and "on" not in msg:
-            return None, "DANGER needs on (true/false)"
+        elif e in ("DANGER", "PAUSE") and "on" not in msg:
+            return None, f"{e} needs on (true/false)"
         elif e == "BOOT":
             parts = raw.get("sensors") if isinstance(raw.get("sensors"), dict) else {}
             msg["sensors"] = {k: bool(parts[k]) for k in BOOT_PARTS if k in parts}
@@ -235,6 +237,10 @@ def validate_command(cmd):
         if not isinstance(cmd.get("on"), bool):
             raise ValueError("danger needs on: true or false")
         return {"t": "DANGER", "n": n, "on": cmd["on"]}
+    if t == "PAUSE":                       # demo: node stops sensing / calling / sending
+        if not isinstance(cmd.get("on"), bool):
+            raise ValueError("pause needs on: true or false")
+        return {"t": "PAUSE", "n": n, "on": cmd["on"]}
     if t == "SETLOC":
         lat, lon = _num(cmd.get("lat"), float), _num(cmd.get("lon"), float)
         if lat is None or not -90 <= lat <= 90:
@@ -243,7 +249,7 @@ def validate_command(cmd):
             raise ValueError("longitude must be a number from -180 to 180")
         label = cmd.get("label") if isinstance(cmd.get("label"), str) else ""
         return {"t": "SETLOC", "n": n, "lat": lat, "lon": lon, "label": label.strip()[:20]}
-    raise ValueError("t must be CALL, MSG, ASK, DANGER, SETLOC, RESET or REBOOT")
+    raise ValueError("t must be CALL, MSG, ASK, DANGER, PAUSE, SETLOC, RESET or REBOOT")
 
 
 def describe(msg, outgoing=False):
@@ -263,6 +269,8 @@ def describe(msg, outgoing=False):
             return "Rescuer restarted the node" + ("" if msg.get("keep_gps", True) else " and cleared its GPS fix")
         if t == "DANGER":
             return "Rescuer turned the danger alarm " + ("ON (test)" if msg.get("on") else "off")
+        if t == "PAUSE":
+            return "Rescuer paused the node (demo)" if msg.get("on") else "Rescuer resumed the node"
         if t == "SETLOC":
             label = f' "{msg["label"]}"' if msg.get("label") else ""
             return f"Rescuer set the location manually: {msg['lat']:.5f}, {msg['lon']:.5f}{label}"
@@ -318,6 +326,8 @@ def describe(msg, outgoing=False):
                 }.get(msg.get("p"), f"Node beeped ({msg.get('p')})")
     if e == "DANGER":
         return "Danger alarm ON" if msg["on"] else "Danger alarm off"
+    if e == "PAUSE":
+        return "Node paused (demo): no sensing, calls or messages" if msg["on"] else "Node resumed"
     if e == "REBOOTING":
         return "Node restarting…"
     if e == "BOOT":

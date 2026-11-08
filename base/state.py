@@ -74,6 +74,9 @@ class Node:
         self.snd = None             # loudest sound level in the last heartbeat period
         self.last_sound = None      # {"k": "TAP"/"VOICE", "ts": ...}
         self.co2_hist = deque()     # (ts, co2, base)
+        self.snd_hist = deque()     # (ts, loudest level, noise floor, voice threshold, knock threshold)
+        self.snd_marks = deque()    # (ts, "TAP"/"VOICE") sounds the node reported, for the chart
+        self.paused = False         # paused for a demo (from the base)
         self.hold_until = None      # CO2 evidence expires at this time (node's hold timer)
         self.co2_marks = deque()    # (start_ts, end_ts) of each sudden rise, for the chart
         self.elevated_logged = -1e9
@@ -108,6 +111,9 @@ class Node:
             "answers": dict(self.answers),
             "snd": self.snd, "last_sound": self.last_sound,
             "co2_hist": [[round(t, 1), c, b] for t, c, b in self.co2_hist],
+            "snd_hist": [[round(t, 1), *rest] for t, *rest in self.snd_hist],
+            "snd_marks": [[round(t, 1), k] for t, k in self.snd_marks],
+            "paused": self.paused,
             "hold_until": self.hold_until if self.lvl in CO2_EVIDENCE else None,
             "co2_marks": [[round(a, 1), round(b, 1)] for a, b in self.co2_marks],
             "call_state": self.call_state, "call_ts": self.call_ts,
@@ -168,6 +174,12 @@ class State:
             nd.co2_hist.append((ts, msg["co2"], msg.get("base", nd.base)))
             while nd.co2_hist and ts - nd.co2_hist[0][0] > CO2_HISTORY_SECS:
                 nd.co2_hist.popleft()
+        if "snd" in msg:
+            nd.snd_hist.append((ts, msg["snd"], msg.get("nf"), msg.get("vt"), msg.get("tt")))
+            while nd.snd_hist and ts - nd.snd_hist[0][0] > CO2_HISTORY_SECS:
+                nd.snd_hist.popleft()
+        if msg["t"] == "HB":                    # a paused node says so in every heartbeat
+            nd.paused = bool(msg.get("paused"))
         if "hold" in msg:                       # node says how long its CO2 evidence lasts
             nd.hold_until = ts + msg["hold"]
 
@@ -208,8 +220,15 @@ class State:
             elif msg["e"] == "NORESP" and "calls" in msg:
                 nd.calls_unanswered = msg["calls"]
             kind = sound_kind(msg)
+            if msg["e"] == "RESP":
+                kind = msg["kind"]
             if kind:
                 nd.last_sound = {"k": kind, "ts": ts}
+                nd.snd_marks.append((ts, kind))
+                while nd.snd_marks and ts - nd.snd_marks[0][0] > CO2_HISTORY_SECS:
+                    nd.snd_marks.popleft()
+            if msg["e"] == "PAUSE":
+                nd.paused = msg["on"]
         quiet_loc = False
         if msg["t"] == "LOC":                   # timeline only when the source changes
             prev = nd.loc["src"] if nd.loc else None
