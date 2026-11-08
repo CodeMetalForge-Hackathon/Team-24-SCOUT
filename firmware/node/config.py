@@ -22,9 +22,12 @@ PIN_SOUND      = board.A0
 PIN_TILT       = board.D6
 
 # ---- sound ----
-SOUND_THRESHOLD = 22000      # above normal room noise (10k-20k)
-SOUND_WINDOW = 0.03          # measure loudness in 30 ms slices
-TAP_MAX_WINDOWS = 4          # loud <= 4 slices (~0.12 s) = TAP, longer = VOICE
+SOUND_TAP_THRESHOLD = 22000     # very loud + short = TAP (knock)
+SOUND_VOICE_THRESHOLD = 14000   # lower: moderately loud but sustained = VOICE
+                                # set just ABOVE your quiet-room "loudest slice" value
+SOUND_WINDOW = 0.03             # 30 ms slices
+TAP_MAX_WINDOWS = 4             # TAP lasts <= 4 slices (~0.12 s)
+VOICE_MIN_WINDOWS = 6           # VOICE lasts >= 6 slices (~0.2 s)
 
 # ---- CO2 (used later) ----
 CO2_BASELINE_SECS = 30 if DEMO_MODE else 120

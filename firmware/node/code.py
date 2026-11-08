@@ -12,8 +12,10 @@ vibration = Vibration(config.PIN_VIBRATION) if config.ENABLE_VIBRATION else None
 
 sound = None
 if config.ENABLE_SOUND:
-    sound = SoundSensor(config.PIN_SOUND, config.SOUND_THRESHOLD,
-                        config.SOUND_WINDOW, config.TAP_MAX_WINDOWS)
+    sound = SoundSensor(config.PIN_SOUND,
+                        config.SOUND_TAP_THRESHOLD, config.SOUND_VOICE_THRESHOLD,
+                        config.SOUND_WINDOW, config.TAP_MAX_WINDOWS,
+                        config.VOICE_MIN_WINDOWS)
 
 print("Node", config.NODE_ID, "starting. Demo mode:", config.DEMO_MODE)
 last_shown = None
