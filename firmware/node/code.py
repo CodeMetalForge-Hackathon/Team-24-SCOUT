@@ -53,8 +53,9 @@ def co2_note(now):
         return ""
     if co2.level == "LEARNING":
         return "CO2 learning %ds" % int(co2.levels.learning_left(now) + 0.999)
-    watch = " watch" if co2.level == "SLIGHT_RISE" else ""
-    return "CO2 %d (%s) RH%s%s" % (co2.ppm, signed(co2.delta), signed(co2.rh_delta), watch)
+    tag = {"SUDDEN_RISE": " JUMP", "BREATHING": " BREATH", "SLOW_BUILDUP": " SLOW",
+           "ELEVATED": " high"}.get(co2.level, "")
+    return "CO2 %d (%s)%s" % (co2.ppm, signed(co2.ppm - co2.baseline), tag)
 
 
 def report(**msg):
@@ -153,17 +154,19 @@ while True:
             brain.activity(now, ev)              # unprompted sound = weak evidence -> POSSIBLE
 
     if co2 and co2.update(now):                  # True only when a new reading (~every 5 s)
-        print("CO2: %d ppm (%s)  RH %.0f%% (%s)  %s"
-              % (co2.ppm, signed(co2.delta), co2.rh, signed(co2.rh_delta), co2.level))
-        brain.set_co2(co2.level, co2.delta, co2.rh_delta, now, co2.levels.trend_min)
+        base = " base %d" % co2.baseline if co2.baseline is not None else ""
+        print("CO2: %d ppm  RH %.0f%%%s  %s" % (co2.ppm, co2.rh, base, co2.level))
+        brain.set_co2(co2.level, co2.rise, co2.rise_secs, co2.rh_jump, now)
         if co2.level != last_co2_level:          # tell the base only when the level changes
             print("EVENT: CO2", last_co2_level, "->", co2.level)
-            ev = {"t": "EV", "e": "CO2", "lvl": co2.level, "prev": last_co2_level,
-                  "delta": int(co2.delta), "rh_delta": int(co2.rh_delta)}
+            ev = {"t": "EV", "e": "CO2", "lvl": co2.level, "prev": last_co2_level}
+            if co2.level in ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP"):
+                ev["rise"] = int(co2.rise)
+                ev["secs"] = co2.rise_secs
+                ev["rh_jump"] = int(co2.rh_jump)
+                ev["hold"] = int(co2.levels.hold_left(now))   # seconds of evidence left
             if co2.baseline is not None:
                 ev["base"] = int(co2.baseline)
-            if co2.level == "SLOW_BUILDUP":
-                ev["min"] = co2.levels.trend_min
             report(**ev)
             last_co2_level = co2.level
 
@@ -209,6 +212,9 @@ while True:
             hb["co2"] = co2.ppm
             hb["rh"] = round(co2.rh, 1)
             hb["lvl"] = co2.level
+            hold = int(co2.levels.hold_left(now))
+            if hold:
+                hb["hold"] = hold                  # lets the dashboard count down the evidence
             if co2.baseline is not None:
                 hb["base"] = int(co2.baseline)
                 hb["rh_base"] = round(co2.rh_baseline, 1)

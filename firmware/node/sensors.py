@@ -113,9 +113,10 @@ class CO2Sensor:
         self.temp = None
         self.last_check = 0
         self.errors = 0
-        self.levels = CO2Levels(cfg.CO2_BASELINE_SECS, cfg.CO2_RISE_PPM, cfg.CO2_SLIGHT_PPM,
-                                cfg.CO2_BASELINE_FOLLOW, cfg.CO2_TREND_MINUTES,
-                                cfg.CO2_TREND_PPM, cfg.RH_RISE_POINTS, start=time.monotonic())
+        self.levels = CO2Levels(cfg.CO2_BASELINE_SECS, cfg.CO2_RATE_WINDOW, cfg.CO2_SUDDEN_PPM,
+                                cfg.CO2_EVENT_HOLD, cfg.RH_RISE_POINTS, cfg.CO2_BASELINE_FOLLOW,
+                                cfg.SLOW_BUILDUP_ENABLED, cfg.CO2_TREND_MINUTES,
+                                cfg.CO2_TREND_PPM, start=time.monotonic())
         try:
             import adafruit_scd4x  # type: ignore
             self.scd = adafruit_scd4x.SCD4X(i2c)
@@ -145,7 +146,7 @@ class CO2Sensor:
         self.levels.feed(now, ppm, rh)
         return True
 
-    # shortcuts so code.py can say co2.level, co2.delta, ...
+    # shortcuts so code.py can say co2.level, co2.rise, ...
     @property
     def ppm(self): return self.levels.ppm
     @property
@@ -153,9 +154,11 @@ class CO2Sensor:
     @property
     def level(self): return self.levels.level
     @property
-    def delta(self): return self.levels.delta
+    def rise(self): return self.levels.rise
     @property
-    def rh_delta(self): return self.levels.rh_delta
+    def rise_secs(self): return self.levels.rise_secs
+    @property
+    def rh_jump(self): return self.levels.rh_jump
     @property
     def baseline(self): return self.levels.baseline
     @property

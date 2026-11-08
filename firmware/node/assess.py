@@ -7,7 +7,9 @@ UNRESPONSIVE = "UNRESPONSIVE"
 # what each sound kind is called on screen / dashboard
 SOUND_REASON = {"TAP": "heard knocking", "VOICE": "heard voice"}
 SOUND_WORD = {"TAP": "knocking", "VOICE": "voice"}
-CO2_ELEVATED = ("RISING", "BREATHING", "SLOW_BUILDUP")   # same as co2logic.ELEVATED
+# CO2 levels that count as evidence (same as co2logic.EVIDENCE).
+# ELEVATED (high but flat: room air) and NORMAL never change the status.
+CO2_EVIDENCE = ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")
 
 
 class Assessor:
@@ -37,10 +39,10 @@ class Assessor:
         self.last_activity = None       # time of last unprompted tap/noise
         self.activity_kind = None       # "TAP" / "VOICE" / None
         self.co2_level = None           # latest CO2 level from co2logic
-        self.co2_delta = 0
-        self.co2_rh_delta = 0
-        self.co2_trend_min = 0
-        self.co2_seen = None            # last time CO2 was RISING/BREATHING/SLOW_BUILDUP
+        self.co2_rise = 0               # ppm
+        self.co2_rise_secs = 0          # over this many seconds (minutes*60 for SLOW_BUILDUP)
+        self.co2_rh_jump = 0            # humidity points
+        self.co2_seen = None            # last time CO2 was evidence (SUDDEN_RISE/BREATHING/SLOW)
         self.unanswered_calls = 0
         self.danger = False
 
@@ -74,36 +76,36 @@ class Assessor:
         self.last_activity = now
         self.activity_kind = kind
 
-    def set_co2(self, level, delta, rh_delta, now, trend_min=0):
+    def set_co2(self, level, rise, rise_secs, rh_jump, now):
         """Latest CO2 level. CO2 is supporting evidence only: it can make a
         node POSSIBLE (alone) or LIKELY (with a sound), never CONFIRMED."""
         self.co2_level = level
-        self.co2_delta = delta
-        self.co2_rh_delta = rh_delta
-        self.co2_trend_min = trend_min
-        if level in CO2_ELEVATED:
+        self.co2_rise = rise
+        self.co2_rise_secs = rise_secs
+        self.co2_rh_jump = rh_jump
+        if level in CO2_EVIDENCE:
             self.co2_seen = now
 
     def set_co2_rising(self, rising):          # older API, kept for compatibility
-        self.set_co2("RISING" if rising else "NORMAL", 0, 0, 0)
+        self.set_co2("SUDDEN_RISE" if rising else "NORMAL", 0, 0, 0, 0)
 
     def set_danger(self, on):
         self.danger = on
 
     # ---- helpers ----
     def co2_up(self):
-        return self.co2_level in CO2_ELEVATED
+        return self.co2_level in CO2_EVIDENCE
 
     def _recent(self, t, now, window):
         return t is not None and now - t < window
 
     def _co2_reason(self):
-        d, rh = int(self.co2_delta), int(self.co2_rh_delta)
+        d, rh, secs = int(self.co2_rise), int(self.co2_rh_jump), int(self.co2_rise_secs)
         if self.co2_level == "BREATHING":
             return "breathing detected: CO2 +%d ppm, humidity +%d%%" % (d, rh)
         if self.co2_level == "SLOW_BUILDUP":
-            return "slow CO2 build-up +%d ppm over %d min" % (d, self.co2_trend_min)
-        return "CO2 rising +%d ppm" % d
+            return "slow CO2 build-up +%d ppm over %d min" % (d, int(secs / 60 + 0.5))
+        return "sudden CO2 rise +%d ppm in %ds" % (d, secs)
 
     # ---- the rules, checked strongest first ----
     def evaluate(self, now):
