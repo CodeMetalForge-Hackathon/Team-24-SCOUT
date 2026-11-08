@@ -1,5 +1,6 @@
 import time
 import digitalio
+from buttonlogic import PressLogic
 
 
 class Button:
@@ -25,31 +26,11 @@ class Button:
             self.led = digitalio.DigitalInOut(led_pin)
             self.led.direction = digitalio.Direction.OUTPUT
 
-        self.arm_until = arm_until
-        self.stuck_secs = stuck_secs
-        self.debounce = debounce
-        self.down = False
-        self.last_change = -1
-        self.press_start = 0
-        self.stuck = False
+        # the press / stuck / arming rules live in buttonlogic.py (tested on the laptop)
+        self.logic = PressLogic(arm_until, stuck_secs, debounce)
 
     def update(self, now):
-        down = self.btn.value != self.idle
-        if down != self.down and now - self.last_change > self.debounce:
-            self.down = down
-            self.last_change = now
-            if down:                                  # just pressed: start timing
-                self.press_start = now
-                self.stuck = False
-                return None
-            # just released: count it only if it was a normal, armed press
-            if self.stuck or self.press_start < self.arm_until:
-                return None
-            return "PRESS"
-        if self.down and not self.stuck and now - self.press_start >= self.stuck_secs:
-            self.stuck = True
-            return "STUCK"
-        return None
+        return self.logic.update(now, self.btn.value != self.idle)
 
     def set_led(self, now, mode):
         """mode: 'blink' = slow (waiting), 'fast' = press again!, 'on' = confirmed."""
@@ -84,13 +65,13 @@ class Vibration:
 
         self.last_value = self.idle
         self.debounce = debounce
-        self.last_tap = 0
+        self.last_tap = None
 
     def update(self, now):
         v = self.pin.value
         tapped = False
         if v != self.last_value:
-            if v != self.idle and now - self.last_tap > self.debounce:
+            if v != self.idle and (self.last_tap is None or now - self.last_tap > self.debounce):
                 tapped = True
                 self.last_tap = now
             self.last_value = v
@@ -182,7 +163,7 @@ class SoundSensor:
         self.voice_min = voice_min_windows
         self.run = 0          # loud slices in a row
         self.peak = 0         # loudest slice during this sound
-        self.last_tap = 0
+        self.last_tap = None  # None = never (not "at time 0")
         self.level = 0
 
     def reset_run(self):
@@ -217,7 +198,7 @@ class SoundSensor:
         self.run, self.peak = 0, 0
 
         if length <= self.tap_max and peak > self.tap_threshold:
-            if now - self.last_tap > 0.15:
+            if self.last_tap is None or now - self.last_tap > 0.15:
                 self.last_tap = now
                 return "TAP"
             return None

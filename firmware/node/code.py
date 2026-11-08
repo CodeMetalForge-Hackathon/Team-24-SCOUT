@@ -13,8 +13,10 @@ boot = time.monotonic()
 arm_until = boot + config.ARMING_SECS   # presses before this are ignored
 
 ui = UI(config.NODE_ID)
+# arm_until: for the first ARMING_SECS the brain ignores every input (sensors settle)
 brain = Assessor(activity_window=config.ACTIVITY_WINDOW, response_window=config.RESPONSE_WINDOW,
-                 confirm_window=config.CONFIRM_WINDOW, combine_window=config.COMBINE_WINDOW)
+                 confirm_window=config.CONFIRM_WINDOW, combine_window=config.COMBINE_WINDOW,
+                 arm_until=arm_until)
 beeper = BeepPlayer(config.PIN_SPEAKER, config.BASE_FREQ, config.BEEPS, config.BEEP_PRIORITY,
                     config.MIC_TAIL)
 caller = Caller(config.CALL_INTERVAL, config.LISTEN_SECS, config.RESPONSE_MIN_TAPS,
@@ -166,6 +168,12 @@ def read_commands(now):
             cmd_buf += ch
 
 
+# ---------- startup self-check: which parts answered? ----------
+sensors_ok = {"sound": sound is not None, "co2": co2 is not None, "gps": False,
+              "button": True, "speaker": beeper.pwm is not None}
+print("SELF-CHECK:", " ".join("%s=%s" % (k, "ok" if v else "MISSING") for k, v in sensors_ok.items()))
+report(t="EV", e="BOOT", sensors=sensors_ok)
+
 print("Node", config.NODE_ID, "starting. Profile:", config.PROFILE,
       "| presses ignored for", config.ARMING_SECS, "s | first call in",
       int(caller.next_call - boot), "s")
@@ -176,7 +184,7 @@ last_st_time = -100
 last_danger = False
 next_hb = 0
 stuck_until = 0
-mic_was_muted = False
+mic_was_ignored = False
 loudest = 0          # loudest sound level since the last heartbeat (shown on dashboard)
 
 while True:
@@ -194,6 +202,8 @@ while True:
         elif ev == "PRESS":
             caller.cancel(now)                   # a press during a call: button logic takes over
             stage = brain.button_press(now)      # also resets the unanswered-call counter
+            if stage is None:                    # (can't happen: Button ignores arming presses)
+                continue
             print("EVENT: PRESS ME", stage)
             report(t="EV", e="BTN", stage=stage)
             beep("AGAIN" if stage == "first" else "CONFIRM", now)
@@ -203,13 +213,16 @@ while True:
         brain.activity(now, "TAP")
 
     # Microphone: muted while the speaker beeps (+ MIC_TAIL), so our own beeps
-    # never count as knocks. We still sample it to keep its state consistent.
+    # never count as knocks, and ignored while ARMING (the input is still settling
+    # and the display/speaker start-up clicks look like knocks). We still sample it
+    # to keep its state consistent.
     muted = beeper.playing or now < beeper.quiet_until
+    ignore_mic = muted or now < arm_until
     if sound:
-        if mic_was_muted and not muted:
-            sound.reset_run()                    # a sound that began during the beep doesn't count
+        if mic_was_ignored and not ignore_mic:
+            sound.reset_run()                    # a sound that began while ignored doesn't count
         ev = sound.update(now)
-        if muted:
+        if ignore_mic:
             ev = None
         elif sound.level > loudest:
             loudest = sound.level
@@ -231,7 +244,7 @@ while True:
                 print("EVENT: sound", ev)
                 report(t="EV", e=ev)             # "TAP" (knocking) or "VOICE"
                 brain.activity(now, ev)          # unprompted sound = weak evidence -> POSSIBLE
-    mic_was_muted = muted
+    mic_was_ignored = ignore_mic
 
     if co2 and co2.update(now):                  # True only when a new reading (~every 5 s)
         base = " base %d" % co2.baseline if co2.baseline is not None else ""
