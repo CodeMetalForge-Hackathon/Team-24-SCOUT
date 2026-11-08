@@ -3,31 +3,64 @@ import digitalio
 
 
 class Button:
-    """PRESS ME button + LED. LED blinks to get attention, solid once pressed."""
-    def __init__(self, btn_pin, led_pin, pull, debounce=0.05):
+    """PRESS ME button + its LED, with accidental-press protection.
+
+    update(now) returns:
+      "PRESS" once, when the button is RELEASED after a normal press
+      "STUCK" once, if it is held >= stuck_secs (rubble resting on it, not a
+              person); that press is then ignored
+      None    otherwise
+    Presses that start before arm_until (just after power-on) are ignored.
+    """
+    def __init__(self, btn_pin, pull, led_pin=None, arm_until=0, stuck_secs=5, debounce=0.05):
         self.btn = digitalio.DigitalInOut(btn_pin)
         self.btn.direction = digitalio.Direction.INPUT
         self.btn.pull = pull
-        self.idle = self.btn.value            # value when NOT pressed
+        # Idle level comes from the pull resistor, not a startup reading, so a
+        # button that is already held at boot is still seen as "down" (-> STUCK).
+        self.idle = pull == digitalio.Pull.UP
 
-        self.led = digitalio.DigitalInOut(led_pin)
-        self.led.direction = digitalio.Direction.OUTPUT
+        self.led = None
+        if led_pin is not None:
+            self.led = digitalio.DigitalInOut(led_pin)
+            self.led.direction = digitalio.Direction.OUTPUT
 
+        self.arm_until = arm_until
+        self.stuck_secs = stuck_secs
         self.debounce = debounce
-        self.was_down = False
-        self.last_change = 0
-        self.mode = "blink"
+        self.down = False
+        self.last_change = -1
+        self.press_start = 0
+        self.stuck = False
 
     def update(self, now):
-        """Returns True ONCE per press."""
         down = self.btn.value != self.idle
-        pressed = False
-        if down != self.was_down and now - self.last_change > self.debounce:
+        if down != self.down and now - self.last_change > self.debounce:
+            self.down = down
             self.last_change = now
-            self.was_down = down
-            pressed = down
-        self.led.value = True if self.mode == "on" else int(now * 2) % 2 == 0
-        return pressed
+            if down:                                  # just pressed: start timing
+                self.press_start = now
+                self.stuck = False
+                return None
+            # just released: count it only if it was a normal, armed press
+            if self.stuck or self.press_start < self.arm_until:
+                return None
+            return "PRESS"
+        if self.down and not self.stuck and now - self.press_start >= self.stuck_secs:
+            self.stuck = True
+            return "STUCK"
+        return None
+
+    def set_led(self, now, mode):
+        """mode: 'blink' = slow (waiting), 'fast' = press again!, 'on' = confirmed."""
+        if self.led is None:
+            return
+        if mode == "on":
+            self.led.value = True
+        elif mode == "fast":
+            self.led.value = int(now * 8) % 2 == 0    # 4 blinks per second
+        else:
+            self.led.value = int(now * 2) % 2 == 0    # 1 blink per second
 
 
 class Vibration:
