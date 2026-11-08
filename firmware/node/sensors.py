@@ -66,14 +66,21 @@ class Vibration:
 
 class SoundSensor:
     """Grove Sound Sensor on an analog pin.
-    'TAP' = short loud spike, 'VOICE' = loud sound that lasts longer."""
-    def __init__(self, pin, threshold, window=0.03, tap_max_windows=4):
+    'TAP'   = short AND very loud (knock)
+    'VOICE' = only moderately loud but LASTS (talking/'HELP!', even from farther away)
+    Short medium blips are ignored."""
+
+    def __init__(self, pin, tap_threshold, voice_threshold,
+                 window=0.03, tap_max_windows=4, voice_min_windows=6):
         import analogio
         self.mic = analogio.AnalogIn(pin)
-        self.threshold = threshold
+        self.tap_threshold = tap_threshold
+        self.voice_threshold = voice_threshold
         self.window = window
         self.tap_max = tap_max_windows
-        self.run = 0
+        self.voice_min = voice_min_windows
+        self.run = 0          # loud slices in a row
+        self.peak = 0         # loudest slice during this sound
         self.last_tap = 0
         self.level = 0
 
@@ -89,15 +96,24 @@ class SoundSensor:
     def update(self, now):
         """Returns 'TAP', 'VOICE', or None."""
         self.level = self._swing()
-        if self.level > self.threshold:
+
+        if self.level > self.voice_threshold:     # louder than background: track it
             self.run += 1
+            if self.level > self.peak:
+                self.peak = self.level
             return None
         if self.run == 0:
             return None
-        length, self.run = self.run, 0
-        if length <= self.tap_max:
+
+        # the sound just ENDED: decide what it was
+        length, peak = self.run, self.peak
+        self.run, self.peak = 0, 0
+
+        if length <= self.tap_max and peak > self.tap_threshold:
             if now - self.last_tap > 0.15:
                 self.last_tap = now
                 return "TAP"
             return None
-        return "VOICE"
+        if length >= self.voice_min:
+            return "VOICE"
+        return None                               # short medium blip: ignore
