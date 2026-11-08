@@ -34,6 +34,12 @@ class ParseValid(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(msg["n"], 2)
 
+    def test_sound_event(self):
+        msg, err = parse_line('{"t":"EV","n":1,"e":"SOUND","k":"VOICE"}')
+        self.assertIsNone(err)
+        self.assertEqual(describe(msg), "heard a voice")
+        self.assertIsNone(parse_line('{"t":"EV","n":1,"e":"SOUND","k":"SING"}')[0])
+
     def test_count_answer_number(self):
         msg, err = parse_line('{"t":"EV","n":1,"e":"ANS","q":"count","a":2}')
         self.assertIsNone(err)
