@@ -22,6 +22,7 @@ ENABLE_VIBRATION = False     # set True once the vibration sensor is wired to 3V
 ENABLE_SOUND = True
 ENABLE_CO2 = True            # SCD41 on the SEN-25200 via STEMMA QT / I2C
 ENABLE_TILT = False          # tilt switch on D6 -> DANGER siren (not wired yet)
+ENABLE_SPEAKER = True        # False = no beeps at all (e.g. if its static bothers the mic)
 ENABLE_GPS = True            # Mini GPS PA1010D on I2C 0x10 (Qwiic, chained after the CO2 board)
 
 # ---- location ----

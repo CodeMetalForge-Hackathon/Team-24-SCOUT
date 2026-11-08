@@ -19,7 +19,7 @@ brain = Assessor(activity_window=config.ACTIVITY_WINDOW, response_window=config.
                  confirm_window=config.CONFIRM_WINDOW, combine_window=config.COMBINE_WINDOW,
                  arm_until=arm_until)
 beeper = BeepPlayer(config.PIN_SPEAKER, config.BASE_FREQ, config.BEEPS, config.BEEP_PRIORITY,
-                    config.MIC_TAIL)
+                    config.MIC_TAIL, enabled=config.ENABLE_SPEAKER)
 caller = Caller(config.CALL_INTERVAL, config.LISTEN_SECS, config.RESPONSE_MIN_TAPS,
                 first_call_at=max(arm_until, boot + config.CALL_INTERVAL))
 
@@ -258,7 +258,7 @@ def read_commands(now):
 
 # ---------- startup self-check: which parts answered? ----------
 sensors_ok = {"sound": sound is not None, "co2": co2 is not None, "gps": bool(gps and gps.ok),
-              "button": True, "speaker": beeper.pwm is not None}
+              "button": True, "speaker": beeper.ok}
 print("SELF-CHECK:", " ".join("%s=%s" % (k, "ok" if v else "MISSING") for k, v in sensors_ok.items()))
 report(t="EV", e="BOOT", sensors=sensors_ok)
 
