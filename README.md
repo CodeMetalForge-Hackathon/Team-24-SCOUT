@@ -5,7 +5,7 @@ Names: Sai Pulavarthy, Kiran BK, Harry Zhu
 
 An offline search-and-rescue prototype developed for the Code Metal Forge Hackathon · November 6–8, 2026.
 
-Overview
+Overview:
 After a structural collapse, responders need information from areas that can be difficult to reach. Our project explores small sensor nodes that report environmental readings and interaction events to a local base station, helping responders identify areas for further investigation.
 
 The prototype combines ESP32-based firmware, CO₂ sensing, button interaction, audio event logic, and speaker signals with a local dashboard. LoRa provides the intended wireless link between deployed nodes and the base station.
