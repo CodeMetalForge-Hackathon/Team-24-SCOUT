@@ -1,5 +1,5 @@
 ## Team 24 · SCOUT — Search and Communication Observation Unit
-Deploy sensors. Monitor conditions. Send a signal back.
+Deploy sensors. Monitor conditions. Send a confirmation back.
 
 Names: Sai Pulavarthy, Kiran BK, Harry Zhu
 
