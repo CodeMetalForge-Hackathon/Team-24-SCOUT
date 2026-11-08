@@ -185,6 +185,12 @@ class SoundSensor:
         self.last_tap = 0
         self.level = 0
 
+    def reset_run(self):
+        """Forget a sound in progress. Called when the mic is un-muted after a
+        beep, so a sound that started during the beep can't become an event."""
+        self.run = 0
+        self.peak = 0
+
     def _swing(self):
         lo, hi = 65535, 0
         end = time.monotonic() + self.window
