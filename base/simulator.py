@@ -43,6 +43,7 @@ caller_mod = load_caller()
 location = load_node_module("location")
 
 SIM_BASE = {"lat": 42.36010, "lon": -71.05890}   # pretend command post (sim mode default)
+NET_ID = "T24"
 
 # = firmware/node/config.py, DEMO profile
 PROFILE = "DEMO"
@@ -149,11 +150,17 @@ class SimSource(Source):
             heapq.heappush(self._heap, (time.monotonic() + delay, next(self._seq), fn))
 
     def emit(self, node, **msg):
+        """Like the real path: node broadcasts by ESP-NOW (net + id), the LilyGO
+        receiver adds rssi and prints one JSON line. Urgent messages arrive 3 times."""
         if not node.alive:
             return
-        msg = {"n": node.n, **msg, "rssi": node.rssi()}
+        node.msg_id = (getattr(node, "msg_id", 0) + 1) % 10000
+        msg = {"n": node.n, **msg, "net": NET_ID, "id": node.msg_id}
         msg = {"t": msg.pop("t"), **msg}          # keep "t" first, like the real nodes
-        self.on_line(json.dumps(msg, separators=(",", ":")))
+        urgent = msg.get("e") in ("BTN", "RESP", "NORESP", "DANGER", "TILT") or \
+            (msg["t"] == "ST" and msg.get("st") in ("UNRESPONSIVE", "CONFIRMED"))
+        for _ in range(3 if urgent else 1):
+            self.on_line(json.dumps({**msg, "rssi": node.rssi()}, separators=(",", ":")))
 
     def heartbeat(self, node, now):
         st, _ = node.brain.evaluate(now)
@@ -382,6 +389,10 @@ class SimSource(Source):
     # ---------- main loop ----------
     def run(self):
         self._set_status(True, "simulator (fake nodes)")
+        for noise in ("ets Jul 29 2019 12:21:46", "rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)",
+                      "LilyGO receiver ready, channel 1"):
+            self.on_line(noise)                 # the receiver's boot text: not JSON, ignored
+        next_foreign = time.monotonic() + 20
         steps = self.script()
         start = last = time.monotonic()
         idx = 0
@@ -407,6 +418,9 @@ class SimSource(Source):
                 for fn in due:
                     fn()
 
+                if now >= next_foreign:            # another team's packet: dropped by the base
+                    self.on_line('{"t":"EV","n":1,"e":"BTN","stage":"confirmed","net":"T07","id":1,"rssi":-77}')
+                    next_foreign = now + 45
                 for node in self.all:
                     if not node.alive:
                         continue

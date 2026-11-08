@@ -121,6 +121,11 @@
   .loc.LAST { border-color: var(--possible); color: var(--possible); }
   .loc.MANUAL { border-color: var(--blue); color: var(--blue); }
   .loc.NONE { color: var(--muted); }
+  .sig { font-size: 14px; font-weight: 700; white-space: nowrap; }
+  .sig.good { color: var(--ok); } .sig.weak { color: var(--possible); }
+  .sig.poor, .sig.lost { color: var(--unresp); } .sig.usb { color: var(--muted); }
+  .sent { font-size: 12px; font-weight: 800; text-transform: uppercase; padding: 1px 6px; border-radius: 4px;
+    border: 1px solid var(--blue); color: var(--blue); }
 
   /* ---------- triage ---------- */
   .triage-wrap { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(360px, 1fr); gap: 14px; }
@@ -165,7 +170,7 @@
   .kv .k { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .kv .v { font-size: 18px; font-weight: 750; }
   canvas { width: 100%; display: block; }
-  #co2chart, #sndchart { height: 160px; background: var(--panel); border-radius: 8px; }
+  #co2chart { height: 160px; background: var(--panel); border-radius: 8px; }
   .comms { max-height: 180px; overflow-y: auto; font-size: 15px; }
   .comms div { padding: 4px 0; border-bottom: 1px solid var(--line); }
   .comms .out { color: var(--blue); }
@@ -267,7 +272,7 @@
         <table id="triage">
           <thead><tr>
             <th>Status</th><th>Node</th><th>Why</th><th class="hide-sm">Location</th>
-            <th>Heard</th><th class="hide-md">Battery</th><th>Alert</th>
+            <th>Heard</th><th class="hide-sm">Signal</th><th class="hide-md">Battery</th><th>Alert</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -285,6 +290,7 @@
         <div id="dDangerGuide" class="guidance danger" hidden></div>
         <div id="dReason" class="reason"></div>
         <div id="dSince" class="muted"></div>
+        <div id="dLink" class="muted"></div>
 
         <h3>Why this status: evidence</h3>
         <ul class="ev" id="dEv"></ul>
@@ -300,12 +306,6 @@
         </div>
         <canvas id="co2chart"></canvas>
         <div class="muted" style="font-size:13px">last 10 min · dashed = baseline · shaded = sudden rise</div>
-
-        <h3>Sound</h3>
-        <div class="row" style="margin-bottom:6px"><span id="dSnd" class="num"></span></div>
-        <canvas id="sndchart"></canvas>
-        <div class="muted" style="font-size:13px">loudness, last 10 min (the sensor measures how loud, not pitch) ·
-          line = loudest every 10 s · dotted = knock threshold · dashed = voice threshold · shaded = room level · K / V = knock / voice heard</div>
 
         <h3>Location</h3>
         <div class="row"><span id="dLocSrc" class="loc NONE">NONE</span><span id="dLocAge" class="muted"></span></div>
@@ -461,6 +461,7 @@ let meta = {};                     // incident, base
 let nodeMeta = {};                 // n -> {team, notes, tag}
 let source = {};
 let lastRx = null;
+let linkType = null;               // "ESP-NOW" (via the LilyGO receiver) or "USB" (node plugged in)
 let serverOffset = 0;              // server clock - browser clock
 let selected = null;               // node number in the detail panel
 let filter = "all";
@@ -482,6 +483,20 @@ function ago(sec) {
 }
 function store(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
 function load(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+
+// radio link quality from the receiver's RSSI and how long ago the node was heard
+const LINK_LOST = 30;
+function signal(nd) {
+  if (now() - nd.last_seen > LINK_LOST) return { cls: "lost", text: "lost", dbm: nd.rssi };
+  if (nd.rssi == null) return { cls: "usb", text: "USB", dbm: null };
+  if (nd.rssi > -70) return { cls: "good", text: "good", dbm: nd.rssi };
+  if (nd.rssi >= -85) return { cls: "weak", text: "weak", dbm: nd.rssi };
+  return { cls: "poor", text: "poor", dbm: nd.rssi };
+}
+function signalHtml(nd) {
+  const q = signal(nd);
+  return `<span class="sig ${q.cls}">${q.dbm != null ? `${Math.round(q.dbm)} dBm · ` : ""}${q.text}</span>`;
+}
 
 function statusOf(nd) {
   if (nd.pending_reboot) return "RESTARTING";              // until the node's BOOT arrives
@@ -520,7 +535,8 @@ function renderTop() {
   const profs = [...new Set(list.map((nd) => nd.prof).filter(Boolean))];
   $("profile").hidden = !profs.length;
   $("profile").textContent = profs.join(" / ") + " profile";
-  const via = source.name === "sim" ? "Simulator" : source.connected ? "USB / LoRa receiver" : "Receiver offline";
+  const via = source.name === "sim" ? `Simulator · ${linkType || "ESP-NOW"}`
+    : source.connected ? (linkType || "Receiver") : "Receiver offline";
   const age = lastRx ? now() - lastRx : null;
   $("linkText").textContent = `${via} · ${age == null ? "no packets yet" : ago(age)}`;
   $("linkText").title = "Last packet from the nodes " + (age == null ? "never" : ago(age));
@@ -566,6 +582,7 @@ function renderTriage() {
       <td class="why">${esc(nd.paused ? "paused (demo)" : st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `silent for ${ago(now() - nd.last_seen).replace(" ago", "")} · was ${nd.last_status}` : nd.why)}</td>
       <td class="hide-sm">${locBadge(nd)}</td>
       <td class="num">${ago(now() - nd.last_seen)}</td>
+      <td class="hide-sm num">${signalHtml(nd)}</td>
       <td class="hide-md num">${nd.bat != null ? Math.round(nd.bat) + "%" : "–"}</td>
       <td>${alertCell}</td></tr>`;
   }).join("");
@@ -630,6 +647,7 @@ function renderDetail() {
   const cd = /\((\d+)s\)$/.exec(why);
   if (cd && nd.why_ts) why = why.replace(/\(\d+s\)$/, `(${Math.max(0, cd[1] - Math.floor(t - nd.why_ts))}s)`);
   $("dReason").textContent = nd.paused ? "Paused (demo): not sensing, calling or reporting until resumed" : st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `Last status: ${nd.last_status}: ${why}` : why;
+  $("dLink").innerHTML = `Link: ${linkType === "USB" && nd.rssi == null ? "USB cable" : "ESP-NOW radio"} · ${signalHtml(nd)}`;
   $("dSince").textContent = `${st === "LOST" ? "Last heard" : "Status since"} ${hms(st === "LOST" ? nd.last_seen : nd.status_since)}` +
     ` · heard ${ago(t - nd.last_seen)}` + (nd.bat != null ? ` · battery ${Math.round(nd.bat)}%` : "");
   $("dAck").hidden = !unackedFor(nd.n).length;
@@ -646,11 +664,6 @@ function renderDetail() {
   const hold = nd.hold_until && st !== "LOST" ? Math.round(nd.hold_until - t) : 0;
   $("dHold").textContent = hold > 0 ? `· evidence expires in ${hold} s` : "";
   drawCo2($("co2chart"), nd);
-  const ls = nd.last_sound, sh = nd.snd_hist || [], lastS = sh[sh.length - 1];
-  $("dSnd").textContent = (ls ? `Last sound: ${ls.k === "TAP" ? "knocking" : "voice"} ${ago(t - ls.ts)}` : "No sounds heard yet") +
-    (lastS && lastS[2] != null ? ` · room level ${lastS[2]} · voice above ${lastS[3]} · knock above ${lastS[4]}` : "");
-  drawSound($("sndchart"), nd);
-
   // location
   const l = locNow(nd);
   $("dLocSrc").className = "loc " + (l ? l.src : "NONE");
@@ -669,7 +682,7 @@ function renderDetail() {
 
   // comms history: what we sent + what the survivor did
   const comm = (nd.events || []).filter((e) => e.cat === "comms" || e.stage === "confirmed").slice(0, 30);
-  $("dComms").innerHTML = comm.length ? comm.map((e) => `<div class="${e.out ? "out" : ""}"><span class="muted num">${hms(e.ts)}</span> ${esc(e.desc)}</div>`).join("")
+  $("dComms").innerHTML = comm.length ? comm.map((e) => `<div class="${e.out ? "out" : ""}"><span class="muted num">${hms(e.ts)}</span> ${esc(e.desc)}${e.out ? ' <span class="sent">sent</span>' : ""}</div>`).join("")
     : `<div class="muted">No calls or messages yet.</div>`;
 
   $("bDanger").innerHTML = nd.danger ? "Turn danger alarm off" : `${ic("danger")} Danger alarm ON (test)`;
@@ -710,40 +723,6 @@ function drawCo2(cv, nd) {
   if (base != null) { g.setLineDash([6, 5]); g.strokeStyle = muted; g.lineWidth = 1.5; g.beginPath(); g.moveTo(left, Y(base)); g.lineTo(right, Y(base)); g.stroke(); g.setLineDash([]); }
   g.strokeStyle = cssVar("--blue"); g.lineWidth = 2.5; g.lineJoin = "round"; g.beginPath();
   pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); g.stroke();
-}
-
-function drawSound(cv, nd) {
-  if (!cv.clientWidth) return;
-  const { g, w, h } = fitCanvas(cv);
-  const t = now(), span = 600, left = 52, right = w - 8, top = 14, bottom = h - 20;
-  const muted = cssVar("--muted"), line = cssVar("--line");
-  const pts = (nd.snd_hist || []).filter((p) => t - p[0] <= span);
-  g.font = "12px system-ui, sans-serif"; g.fillStyle = muted;
-  g.textAlign = "left"; g.fillText("10 min ago", left, h - 4); g.textAlign = "right"; g.fillText("now", right, h - 4);
-  if (!pts.length) { g.textAlign = "center"; g.fillText("no sound data (no sound sensor, or not reported yet)", (left + right) / 2, h / 2); return; }
-  const hi = Math.min(66000, Math.max(...pts.map((p) => Math.max(p[1], p[4] || 0))) * 1.08);
-  const X = (x) => left + (right - left) * (1 - (t - x) / span), Y = (v) => bottom - (bottom - top) * v / hi;
-  // room level (noise floor) as a shaded band at the bottom
-  g.fillStyle = muted + "33"; g.beginPath(); g.moveTo(X(pts[0][0]), bottom);
-  pts.forEach((p) => g.lineTo(X(p[0]), Y(p[2] || 0))); g.lineTo(X(pts[pts.length - 1][0]), bottom); g.closePath(); g.fill();
-  g.strokeStyle = line; g.lineWidth = 1; g.fillStyle = muted; g.textAlign = "right"; g.textBaseline = "middle";
-  for (const v of [0, hi / 2, hi]) { g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke(); g.fillText(Math.round(v / 1000) + "k", left - 6, Y(v)); }
-  g.textBaseline = "alphabetic";
-  const last = pts[pts.length - 1];
-  const hline = (v, dash, col) => { if (v == null) return; g.setLineDash(dash); g.strokeStyle = col; g.lineWidth = 1.5;
-    g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke(); g.setLineDash([]); };
-  hline(last[3], [6, 5], cssVar("--possible"));          // voice threshold
-  hline(last[4], [2, 4], cssVar("--unresp"));            // knock threshold
-  g.strokeStyle = cssVar("--blue"); g.lineWidth = 2.2; g.lineJoin = "round"; g.beginPath();
-  pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); g.stroke();
-  // K / V markers where the node reported a knock or a voice
-  g.font = "bold 12px system-ui, sans-serif"; g.textAlign = "center";
-  for (const [ts, k] of nd.snd_marks || []) {
-    if (t - ts > span) continue;
-    const x = X(ts), col = cssVar(k === "TAP" ? "--unresp" : "--possible");
-    g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.moveTo(x, top + 10); g.lineTo(x, bottom); g.stroke();
-    g.fillStyle = col; g.fillText(k === "TAP" ? "K" : "V", x, top + 6);
-  }
 }
 
 // ======================= situation radar =======================
@@ -878,6 +857,7 @@ function connect() {
     let d; try { d = JSON.parse(m.data); } catch { return; }
     if (d.server_time) serverOffset = d.server_time - Date.now() / 1000;
     if (d.last_rx !== undefined) lastRx = d.last_rx;
+    if (d.link_type) linkType = d.link_type;
     if (d.type === "full") {
       nodes.clear(); d.nodes.forEach((nd) => nodes.set(nd.n, nd));
       events = d.events; alerts = d.alerts; meta = d.meta || {}; nodeMeta = d.node_meta || {}; source = d.source;

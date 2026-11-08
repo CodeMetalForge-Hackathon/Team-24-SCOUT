@@ -91,6 +91,11 @@ def parse_line(line):
         return None, "missing/bad node id 'n'"
 
     msg = {"t": t, "n": n}
+    if isinstance(raw.get("net"), str):          # network ID (other teams' packets are dropped)
+        msg["net"] = raw["net"][:12]
+    mid = _num(raw.get("id"), int)               # message id: copies of urgent messages share it
+    if mid is not None:
+        msg["id"] = mid
     for key, kind in _NUMERIC.items():
         if key in raw:
             val = _num(raw[key], kind)
