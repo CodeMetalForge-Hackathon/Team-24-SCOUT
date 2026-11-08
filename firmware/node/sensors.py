@@ -38,6 +38,8 @@ class Button:
             return
         if mode == "on":
             self.led.value = True
+        elif mode == "off":                           # node paused
+            self.led.value = False
         elif mode == "fast":
             self.led.value = int(now * 8) % 2 == 0    # 4 blinks per second
         else:
@@ -171,17 +173,28 @@ class Battery:
 
 
 class SoundSensor:
-    """Grove Sound Sensor on an analog pin.
+    """Grove Sound Sensor on an analog pin. It measures LOUDNESS (how much the
+    signal swings in each 30 ms slice), not pitch.
     'TAP'   = short AND very loud (knock)
-    'VOICE' = only moderately loud but LASTS (talking/'HELP!', even from farther away)
-    Short medium blips are ignored."""
+    'VOICE' = louder than the room but LASTS (talking/'HELP!')
+    Short medium blips are ignored.
+
+    The quiet level of the room ("noise floor") is learned all the time, so a
+    sound only counts if it is clearly ABOVE the room: in a noisy room the
+    thresholds move up by themselves. A steady noise (fan, generator) that
+    lasts more than ~4 s is treated as background, not as a voice."""
+
+    MAX_RUN = 100         # slices (~4 s): longer than this = steady background noise
 
     def __init__(self, pin, tap_threshold, voice_threshold,
-                 window=0.03, tap_max_windows=4, voice_min_windows=6):
+                 window=0.03, tap_max_windows=4, voice_min_windows=10,
+                 voice_margin=4000, tap_margin=8000):
         import analogio
         self.mic = analogio.AnalogIn(pin)
-        self.tap_threshold = tap_threshold
+        self.tap_threshold = tap_threshold        # never count anything below these
         self.voice_threshold = voice_threshold
+        self.voice_margin = voice_margin          # ...and it must be this far above the room
+        self.tap_margin = tap_margin
         self.window = window
         self.tap_max = tap_max_windows
         self.voice_min = voice_min_windows
@@ -189,6 +202,13 @@ class SoundSensor:
         self.peak = 0         # loudest slice during this sound
         self.last_tap = None  # None = never (not "at time 0")
         self.level = 0
+        self.floor = None     # learned quiet level of the room
+
+    def thresholds(self):
+        """(voice, tap) thresholds in use right now."""
+        f = self.floor or 0
+        return (max(self.voice_threshold, f + self.voice_margin),
+                max(self.tap_threshold, f + self.tap_margin))
 
     def reset_run(self):
         """Forget a sound in progress. Called when the mic is un-muted after a
@@ -209,10 +229,21 @@ class SoundSensor:
         """Returns 'TAP', 'VOICE', or None."""
         self.level = self._swing()
 
-        if self.level > self.voice_threshold:     # louder than background: track it
+        # learn the room's quiet level: follow it down quickly, up slowly
+        if self.floor is None:
+            self.floor = self.level
+        elif self.level < self.floor:
+            self.floor += (self.level - self.floor) * 0.05
+        else:
+            self.floor += (self.level - self.floor) * 0.003
+
+        voice_t, tap_t = self.thresholds()
+        if self.level > voice_t:                  # clearly louder than the room: track it
             self.run += 1
             if self.level > self.peak:
                 self.peak = self.level
+            if self.run > self.MAX_RUN:           # steady noise, not a person: ignore it
+                self.run, self.peak = 0, 0
             return None
         if self.run == 0:
             return None
@@ -221,7 +252,7 @@ class SoundSensor:
         length, peak = self.run, self.peak
         self.run, self.peak = 0, 0
 
-        if length <= self.tap_max and peak > self.tap_threshold:
+        if length <= self.tap_max and peak > tap_t:
             if self.last_tap is None or now - self.last_tap > 0.15:
                 self.last_tap = now
                 return "TAP"
