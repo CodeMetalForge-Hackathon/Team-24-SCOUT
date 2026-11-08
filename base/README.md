@@ -285,10 +285,6 @@ reporting (screen: PAUSED (DEMO), LEDs off) and only sends "I'm paused" every 30
 Pausing clears every node's evidence: all nodes show **NO SIGNS** (marked "paused (demo)") and, after you resume
 (blue *PAUSED · resume* badge or the menu), they stay at NO SIGNS until something new and real happens.
 
-**Sound chart** (detail panel): the Grove sound sensor measures *loudness*, not pitch. The chart shows the loudest
-sound every 10 s, the room's learned quiet level (shaded), the voice threshold (dashed) and the knock threshold
-(dotted), with K / V markers where the node heard a knock / voice.
-
 ### Resetting a node
 
 | Level | Where | What the node does | What the dashboard clears | Kept |

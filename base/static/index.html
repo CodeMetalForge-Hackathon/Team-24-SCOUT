@@ -170,7 +170,7 @@
   .kv .k { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .kv .v { font-size: 18px; font-weight: 750; }
   canvas { width: 100%; display: block; }
-  #co2chart, #sndchart { height: 160px; background: var(--panel); border-radius: 8px; }
+  #co2chart { height: 160px; background: var(--panel); border-radius: 8px; }
   .comms { max-height: 180px; overflow-y: auto; font-size: 15px; }
   .comms div { padding: 4px 0; border-bottom: 1px solid var(--line); }
   .comms .out { color: var(--blue); }
@@ -306,12 +306,6 @@
         </div>
         <canvas id="co2chart"></canvas>
         <div class="muted" style="font-size:13px">last 10 min · dashed = baseline · shaded = sudden rise</div>
-
-        <h3>Sound</h3>
-        <div class="row" style="margin-bottom:6px"><span id="dSnd" class="num"></span></div>
-        <canvas id="sndchart"></canvas>
-        <div class="muted" style="font-size:13px">loudness, last 10 min (the sensor measures how loud, not pitch) ·
-          line = loudest every 10 s · dotted = knock threshold · dashed = voice threshold · shaded = room level · K / V = knock / voice heard</div>
 
         <h3>Location</h3>
         <div class="row"><span id="dLocSrc" class="loc NONE">NONE</span><span id="dLocAge" class="muted"></span></div>
@@ -670,11 +664,6 @@ function renderDetail() {
   const hold = nd.hold_until && st !== "LOST" ? Math.round(nd.hold_until - t) : 0;
   $("dHold").textContent = hold > 0 ? `· evidence expires in ${hold} s` : "";
   drawCo2($("co2chart"), nd);
-  const ls = nd.last_sound, sh = nd.snd_hist || [], lastS = sh[sh.length - 1];
-  $("dSnd").textContent = (ls ? `Last sound: ${ls.k === "TAP" ? "knocking" : "voice"} ${ago(t - ls.ts)}` : "No sounds heard yet") +
-    (lastS && lastS[2] != null ? ` · room level ${lastS[2]} · voice above ${lastS[3]} · knock above ${lastS[4]}` : "");
-  drawSound($("sndchart"), nd);
-
   // location
   const l = locNow(nd);
   $("dLocSrc").className = "loc " + (l ? l.src : "NONE");
@@ -734,40 +723,6 @@ function drawCo2(cv, nd) {
   if (base != null) { g.setLineDash([6, 5]); g.strokeStyle = muted; g.lineWidth = 1.5; g.beginPath(); g.moveTo(left, Y(base)); g.lineTo(right, Y(base)); g.stroke(); g.setLineDash([]); }
   g.strokeStyle = cssVar("--blue"); g.lineWidth = 2.5; g.lineJoin = "round"; g.beginPath();
   pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); g.stroke();
-}
-
-function drawSound(cv, nd) {
-  if (!cv.clientWidth) return;
-  const { g, w, h } = fitCanvas(cv);
-  const t = now(), span = 600, left = 52, right = w - 8, top = 14, bottom = h - 20;
-  const muted = cssVar("--muted"), line = cssVar("--line");
-  const pts = (nd.snd_hist || []).filter((p) => t - p[0] <= span);
-  g.font = "12px system-ui, sans-serif"; g.fillStyle = muted;
-  g.textAlign = "left"; g.fillText("10 min ago", left, h - 4); g.textAlign = "right"; g.fillText("now", right, h - 4);
-  if (!pts.length) { g.textAlign = "center"; g.fillText("no sound data (no sound sensor, or not reported yet)", (left + right) / 2, h / 2); return; }
-  const hi = Math.min(66000, Math.max(...pts.map((p) => Math.max(p[1], p[4] || 0))) * 1.08);
-  const X = (x) => left + (right - left) * (1 - (t - x) / span), Y = (v) => bottom - (bottom - top) * v / hi;
-  // room level (noise floor) as a shaded band at the bottom
-  g.fillStyle = muted + "33"; g.beginPath(); g.moveTo(X(pts[0][0]), bottom);
-  pts.forEach((p) => g.lineTo(X(p[0]), Y(p[2] || 0))); g.lineTo(X(pts[pts.length - 1][0]), bottom); g.closePath(); g.fill();
-  g.strokeStyle = line; g.lineWidth = 1; g.fillStyle = muted; g.textAlign = "right"; g.textBaseline = "middle";
-  for (const v of [0, hi / 2, hi]) { g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke(); g.fillText(Math.round(v / 1000) + "k", left - 6, Y(v)); }
-  g.textBaseline = "alphabetic";
-  const last = pts[pts.length - 1];
-  const hline = (v, dash, col) => { if (v == null) return; g.setLineDash(dash); g.strokeStyle = col; g.lineWidth = 1.5;
-    g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke(); g.setLineDash([]); };
-  hline(last[3], [6, 5], cssVar("--possible"));          // voice threshold
-  hline(last[4], [2, 4], cssVar("--unresp"));            // knock threshold
-  g.strokeStyle = cssVar("--blue"); g.lineWidth = 2.2; g.lineJoin = "round"; g.beginPath();
-  pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); g.stroke();
-  // K / V markers where the node reported a knock or a voice
-  g.font = "bold 12px system-ui, sans-serif"; g.textAlign = "center";
-  for (const [ts, k] of nd.snd_marks || []) {
-    if (t - ts > span) continue;
-    const x = X(ts), col = cssVar(k === "TAP" ? "--unresp" : "--possible");
-    g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.moveTo(x, top + 10); g.lineTo(x, bottom); g.stroke();
-    g.fillStyle = col; g.fillText(k === "TAP" ? "K" : "V", x, top + 6);
-  }
 }
 
 // ======================= situation radar =======================
