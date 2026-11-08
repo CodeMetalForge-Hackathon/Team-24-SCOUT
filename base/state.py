@@ -12,6 +12,9 @@ LOST_AFTER = 90          # seconds without any message -> node shown as LOST
 CO2_HISTORY_SECS = 600   # keep ~10 min of CO2 points for the chart
 RECENT_EVENTS = 200      # global timeline length kept in memory
 NODE_EVENTS = 20
+CALL_AUDIO = 2.4           # 3 call beeps (1.75 s) + mic tail, before listening starts
+LISTEN_SECS = 10
+CALL_INTERVAL = {"DEMO": 20, "FIELD": 60}   # must match firmware/node/config.py
 ELEVATED_LOG_EVERY = 300  # log "CO2 high but steady" at most every 5 min
 NUMBERS = re.compile(r"[+-]?\d+")
 
@@ -54,6 +57,13 @@ class Node:
         self.hold_until = None      # CO2 evidence expires at this time (node's hold timer)
         self.co2_marks = deque()    # (start_ts, end_ts) of each sudden rise, for the chart
         self.elevated_logged = -1e9
+        # call-and-listen cycle (exact state from heartbeats, estimated in between)
+        self.call_state = None      # IDLE / CALLING / LISTENING
+        self.call_ts = None         # when the last call started
+        self.listen_end = None      # when the current listening window ends
+        self.next_call_at = None    # when the next call is due
+        self.calls_unanswered = 0
+        self.mic = None             # "on" / "muted" (from the last heartbeat)
         self.events = deque(maxlen=NODE_EVENTS)
 
     def to_dict(self, now):
@@ -74,6 +84,9 @@ class Node:
             "co2_hist": [[round(t, 1), c, b] for t, c, b in self.co2_hist],
             "hold_until": self.hold_until if self.lvl in CO2_EVIDENCE else None,
             "co2_marks": [[round(a, 1), round(b, 1)] for a, b in self.co2_marks],
+            "call_state": self.call_state, "call_ts": self.call_ts,
+            "listen_end": self.listen_end, "next_call_at": self.next_call_at,
+            "calls_unanswered": self.calls_unanswered, "mic": self.mic,
             "events": list(self.events),
         }
 
@@ -107,6 +120,18 @@ class State:
                 nd.why_ts = ts
         if "dg" in msg:
             nd.danger = bool(msg["dg"])
+        if "danger" in msg:
+            nd.danger = msg["danger"]
+        if "mic" in msg:
+            nd.mic = msg["mic"]
+        if "calls_unanswered" in msg:
+            nd.calls_unanswered = msg["calls_unanswered"]
+        if "call_state" in msg:                 # heartbeat: exact call-cycle state
+            nd.call_state = msg["call_state"]
+            if nd.call_state == "LISTENING" and "listen_left" in msg:
+                nd.listen_end = ts + msg["listen_left"]
+            if nd.call_state == "IDLE" and "next_call_in" in msg:
+                nd.next_call_at = ts + msg["next_call_in"]
 
         if "co2" in msg:
             nd.co2_hist.append((ts, msg["co2"], msg.get("base", nd.base)))
@@ -136,10 +161,23 @@ class State:
                 nd.danger = True        # cleared by the next heartbeat with dg=0
             elif msg["e"] == "ANS":
                 nd.answers[msg["q"]] = msg["a"]
+            elif msg["e"] == "DANGER":
+                nd.danger = msg["on"]
+            elif msg["e"] == "CALL":
+                nd.call_state, nd.call_ts = "CALLING", ts
+                nd.listen_end = ts + CALL_AUDIO + LISTEN_SECS       # estimate until the next HB
+            elif msg["e"] in ("RESP", "NORESP") or (msg["e"] == "BTN" and nd.call_state != "IDLE"):
+                nd.call_state = "IDLE"
+                nd.next_call_at = ts + CALL_INTERVAL.get(nd.prof, 20)
+            if msg["e"] in ("RESP", "BTN"):
+                nd.calls_unanswered = 0
+            elif msg["e"] == "NORESP" and "calls" in msg:
+                nd.calls_unanswered = msg["calls"]
             kind = sound_kind(msg)
             if kind:
                 nd.last_sound = {"k": kind, "ts": ts}
-        if msg["t"] == "HB" or tick or quiet_co2:
+        quiet_beep = msg["t"] == "EV" and msg["e"] == "BEEP"   # always duplicates another entry
+        if msg["t"] == "HB" or tick or quiet_co2 or quiet_beep:
             return None
         ev = make_event(msg, ts, ev_id=ev_id)
         nd.events.appendleft(ev)

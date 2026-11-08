@@ -150,3 +150,36 @@ class Commands(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CallMessages(unittest.TestCase):
+    def test_call_cycle_events(self):
+        cases = [('{"t":"EV","n":1,"e":"CALL"}', "Node called: 'tap 3 times'"),
+                 ('{"t":"EV","n":1,"e":"RESP","kind":"TAP","taps":3}', "Survivor tapped back 3 times after call"),
+                 ('{"t":"EV","n":1,"e":"RESP","kind":"VOICE"}', "Survivor answered by voice"),
+                 ('{"t":"EV","n":1,"e":"NORESP","calls":2}', "No answer to call (2 in a row)"),
+                 ('{"t":"EV","n":1,"e":"DANGER","on":true}', "Danger alarm ON"),
+                 ('{"t":"EV","n":1,"e":"DANGER","on":false}', "Danger alarm off"),
+                 ('{"t":"EV","n":1,"e":"BEEP","p":"CONFIRM"}', "Node played the confirm chime"),
+                 ('{"t":"ST","n":1,"st":"UNRESPONSIVE","why":"breathing but no answer to 2 calls"}',
+                  "UNRESPONSIVE: Breathing but no answer to 2 calls: possibly unconscious")]
+        for line, text in cases:
+            msg, err = parse_line(line)
+            self.assertIsNone(err, line)
+            self.assertEqual(describe(msg), text)
+        self.assertIsNone(parse_line('{"t":"EV","n":1,"e":"RESP"}')[0])           # needs kind
+        self.assertIsNone(parse_line('{"t":"EV","n":1,"e":"DANGER","on":"yes"}')[0])
+
+    def test_heartbeat_call_fields(self):
+        msg, err = parse_line('{"t":"HB","n":1,"call_state":"LISTENING","listen_left":7,"next_call_in":0,'
+                              '"calls_unanswered":2,"mic":"muted","danger":true}')
+        self.assertIsNone(err)
+        self.assertEqual((msg["call_state"], msg["listen_left"], msg["calls_unanswered"], msg["mic"],
+                          msg["danger"]), ("LISTENING", 7, 2, "muted", True))
+
+    def test_danger_command(self):
+        self.assertEqual(validate_command({"t": "DANGER", "n": 1, "on": True}),
+                         {"t": "DANGER", "n": 1, "on": True})
+        with self.assertRaises(ValueError):
+            validate_command({"t": "DANGER", "n": 1})
+        self.assertIn("ON (test)", describe({"t": "DANGER", "n": 1, "on": True}, outgoing=True))
