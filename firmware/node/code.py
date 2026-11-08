@@ -10,6 +10,14 @@ from beeper import BeepPlayer
 from caller import Caller, CALLING, LISTENING
 from location import Location, GPSReader, header_tag
 
+# ---------- wireless link (ESP-NOW now, LoRa later: same JSON lines) ----------
+link = None
+if config.ENABLE_LINK and config.LINK_TYPE == "ESPNOW":
+    from link_espnow import EspNowLink
+    link = EspNowLink()
+    if not link.ok:
+        link = None                              # radio didn't start: USB only
+
 boot = time.monotonic()
 arm_until = boot + config.ARMING_SECS   # presses before this are ignored
 
@@ -103,14 +111,23 @@ def co2_note(now):
     return "CO2 %d (%s)%s" % (co2.ppm, signed(co2.ppm - co2.baseline), tag)
 
 
-MAX_MSG = 200   # bytes: keep every message small enough for one LoRa packet
+MAX_MSG = 240   # bytes: one ESP-NOW packet is at most 250
+msg_id = 0      # short counter: the base drops repeated copies of the same id
+
+# Messages a responder must not miss go out 3 times by radio (same id).
+URGENT_EVENTS = ("BTN", "RESP", "NORESP", "DANGER", "TILT")
+URGENT_STATUS = ("UNRESPONSIVE", "CONFIRMED")
 
 
 def report(**msg):
-    """One JSON line for the base station. Over USB the dashboard reads these
-    directly; later the radio sends the exact same text over LoRa.
+    """One JSON line for the base station: printed to USB (the dashboard can read
+    the node directly) AND broadcast by radio (ESP-NOW now, LoRa later).
     Normal debug prints have no { } so the dashboard ignores them."""
+    global msg_id
+    msg_id = (msg_id + 1) % 10000
     msg["n"] = config.NODE_ID
+    msg["net"] = config.NET_ID                         # receivers drop other teams' packets
+    msg["id"] = msg_id
     try:
         line = json.dumps(msg, separators=(",", ":"))   # no spaces: fewer bytes
     except TypeError:                                   # older json without separators=
@@ -118,6 +135,9 @@ def report(**msg):
     if len(line) > MAX_MSG:
         print("WARNING: message is", len(line), "bytes (> %d)" % MAX_MSG)
     print(line)
+    if link:
+        urgent = msg.get("e") in URGENT_EVENTS or (msg.get("t") == "ST" and msg.get("st") in URGENT_STATUS)
+        link.send(line, time.monotonic(), urgent)
 
 
 def beep(name, now):
@@ -153,7 +173,12 @@ PAUSED_HB = 30          # a paused node still says "I'm here, paused" this often
 cmd_buf = ""
 
 
-def handle_command(line, now):
+COMMANDS = ("CALL", "MSG", "DANGER", "RESET", "REBOOT", "SETLOC", "PAUSE")
+seen_cmds = {}          # command id (or text) -> time: the receiver sends each command 3 times
+
+
+def handle_command(line, now, radio=False):
+    """A command from the base: a line on USB, or a packet received by radio."""
     global message_text, message_until, prompt_until, mic_was_ignored, paused, last_st, next_hb, next_loc
     start = line.find("{")
     if start < 0:
@@ -161,10 +186,22 @@ def handle_command(line, now):
     try:
         cmd = json.loads(line[start:])
     except ValueError:
-        print("bad command:", line)
+        if not radio:
+            print("bad command:", line)
         return
     if not isinstance(cmd, dict) or cmd.get("n", config.NODE_ID) != config.NODE_ID:
         return                                   # not for this node
+    if radio:
+        # over the air: only OUR network's commands; skip the receiver's repeats
+        if cmd.get("net") != config.NET_ID or cmd.get("t") not in COMMANDS:
+            return
+        key = cmd.get("id", line)
+        for k in [k for k, t0 in seen_cmds.items() if now - t0 > 5]:
+            del seen_cmds[k]
+        if key in seen_cmds:
+            return
+        seen_cmds[key] = now
+        print("RADIO COMMAND:", line[:80])
     t = cmd.get("t")
     if t == "RESET":
         # "Clear status": forget all evidence and counters, keep sensor baselines
@@ -280,6 +317,10 @@ loudest = 0          # loudest sound level since the last heartbeat (shown on da
 while True:
     now = time.monotonic()
     read_commands(now)
+    if link:
+        for text, rssi in link.poll():           # commands by radio, handled like USB ones
+            handle_command(text, now, radio=True)
+        link.update(now)                         # send the urgent repeats that are due
     beeper.update(now)                           # advance the beep pattern (never blocks)
 
     if paused:
