@@ -363,3 +363,26 @@ def test_reset_is_not_rearming_and_keeps_danger():
     b.activity(20, "TAP")                        # no arming phase after a clear
     assert b.evaluate(21)[0] == "POSSIBLE"
     assert b.danger
+
+
+# ---------------------------------------------------------------- pause / resume (demo)
+
+def test_clear_event_drops_a_held_co2_rise():
+    """Pause/resume: a breath held as evidence must not bring POSSIBLE back."""
+    c = co2logic.CO2Levels(start=0, **DEMO_CO2)
+    t = 0
+    while t <= 30:
+        c.feed(t, 810, 48)
+        t += 5
+    for d, drh in [(150, 2), (380, 4)]:
+        c.feed(t, 810 + d, 48 + drh)
+        t += 5
+    assert c.level == "BREATHING"
+    c.clear_event()
+    t += 30                                      # CO2 still high and flat after the resume
+    c.feed(t, 1190, 52)
+    assert c.level == "ELEVATED"
+    b = armed()
+    b.reset("no evidence yet")
+    b.set_co2(c.level, c.rise, c.rise_secs, c.rh_jump, t)
+    assert b.evaluate(t) == ("NO SIGNS", "no evidence yet")

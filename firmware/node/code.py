@@ -215,7 +215,15 @@ def handle_command(line, now):
             if sound:
                 sound.reset_run()
             mic_was_ignored = True               # in-progress sound is discarded on resume
-            if not on:
+            # Pause and resume both wipe the evidence: the node shows NO SIGNS and
+            # stays there until something NEW and real happens after the resume.
+            brain.reset("paused by base" if on else "no evidence yet")
+            if co2:
+                co2.levels.clear_event()         # a held CO2 rise doesn't come back either
+            if on:
+                report(t="ST", st="NO SIGNS", why="paused by base", ev=brain.evidence(now))
+                last_st = ("NO SIGNS", "paused by base")
+            else:
                 last_st = (None, None)           # send the status again right away
                 next_hb = next_loc = now
         report(t="EV", e="PAUSE", on=paused)
