@@ -5,13 +5,24 @@ NODE_ID = 1
 DEMO_MODE = True
 CALL_INTERVAL = 20 if DEMO_MODE else 60   # seconds between "calls"
 ACTIVITY_WINDOW = 15 if DEMO_MODE else 120
-HEARTBEAT_INTERVAL = 3 if DEMO_MODE else 30   # seconds between {"t":"HB"} report lines
+HEARTBEAT_INTERVAL = 10 if DEMO_MODE else 30  # seconds between {"t":"HB"} report lines
+ST_MIN_INTERVAL = 5          # while counting down, send an ST line at most every 5 s
+
+# ---- accidental-press protection ----
+ARMING_SECS = 10 if DEMO_MODE else 30   # ignore presses right after power-on (handling, placing)
+CONFIRM_WINDOW = 20          # 2nd press within this many seconds = CONFIRMED
+STUCK_SECS = 5               # held this long = debris on the button, not a person
 
 # ---- turn sensors on/off ----
 ENABLE_VIBRATION = False     # set True once the vibration sensor is wired to 3V/GND/5
 ENABLE_SOUND = False
 
-# ---- PRESS ME: built-in D1 button + built-in red LED ----
+# ---- PRESS ME (main): Grove Red LED Button ----
+PIN_GROVE_BUTTON  = board.A3
+GROVE_BUTTON_PULL = digitalio.Pull.UP      # reads True when idle, False when pressed
+PIN_GROVE_LED     = board.A2               # True = LED on
+
+# ---- PRESS ME (backup): built-in D1 button + built-in red LED ----
 PIN_BUTTON     = board.D1
 BUTTON_PULL    = digitalio.Pull.DOWN       # D1 reads True when pressed
 PIN_BUTTON_LED = board.LED

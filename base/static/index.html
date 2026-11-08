@@ -108,6 +108,14 @@
   #timeline li time { color: var(--muted); font-variant-numeric: tabular-nums; }
   #timeline li.out { color: #bcdcff; } #timeline li.out .tdot { background: var(--blue); }
   #timeline li.new { animation: flash 1.5s ease-out; }
+  #timeline li.first { color: var(--s-likely); }
+  #timeline li.confirmed { background: rgba(34, 197, 94, .18); border-left: 5px solid var(--s-confirmed);
+    color: #b9f6cf; font-weight: 800; padding-left: 6px; }
+  #timeline li.stuck { color: var(--muted); font-style: italic; }
+  .btn.reset { background: transparent; border-color: #6b7480; color: var(--muted); font-weight: 600; }
+  .btn.reset:hover { border-color: var(--s-unresp); color: var(--text); }
+  #alertsBtn { min-height: 36px; padding: 4px 12px; }
+  #alertsBtn.on { display: none; }
 
   @keyframes pulse { 50% { opacity: .55; } }
   @keyframes pulse-border { 50% { box-shadow: 0 0 0 6px rgba(255, 59, 59, .35); } }
@@ -133,6 +141,7 @@
 <header>
   <span class="offline">OFFLINE MODE: LoRa only</span>
   <h1>Rubble Survivor Nodes</h1>
+  <button id="alertsBtn" class="btn" title="Browsers only play sound after you click once">🔔 Enable alert sound</button>
   <span class="conn" title="Receiver / simulator feeding this base station"><span id="srcDot" class="dot"></span><span id="srcText">Receiver: ?</span></span>
   <span class="conn" title="Live link between this page and the base station"><span id="wsDot" class="dot"></span><span id="wsText">Connecting…</span></span>
   <span id="clock">--:--:--</span>
@@ -183,6 +192,9 @@
       <span class="count" data-r="count">0/60</span>
       <button class="btn" type="submit">Send</button>
     </form>
+    <div class="controls">
+      <button class="btn reset" data-r="reset">↺ Reset node (false alarm)</button>
+    </div>
     <div class="feedback" data-r="fb" role="status"></div>
   </article>
 </template>
@@ -231,6 +243,11 @@ function getCard(n) {
     if (!txt) { r.txt.classList.add("err"); feedback(r, "Type a message first.", "err"); r.txt.focus(); return; }
     send({ t: "MSG", n, txt }, r.form.querySelector("button"), r, () => { r.txt.value = ""; r.count.textContent = "0/60"; });
   });
+  r.reset.addEventListener("click", () => {
+    if (confirm(`Reset node ${n}? This clears its status and evidence (use for a false alarm).`)) {
+      send({ t: "RESET", n }, r.reset, r);
+    }
+  });
   // keep cards ordered by node number
   const after = [...cards.keys()].filter((k) => k > n).sort((a, b) => a - b)[0];
   $("nodes").insertBefore(el, after !== undefined ? cards.get(after).el : null);
@@ -248,7 +265,11 @@ function render(nd) {
   r.pill.className = `pill ${status.replace(" ", "-")}`;
   r.pill.textContent = status;
 
-  r.why.textContent = lost ? `No message for ${ago(now - nd.last_seen).replace(" ago", "")}` : nd.why || "";
+  // The node only sends the countdown every 5 s; tick it down locally in between.
+  let why = nd.why || "";
+  const cd = /\((\d+)s\)$/.exec(why);
+  if (cd && nd.why_ts) why = why.replace(/\(\d+s\)$/, `(${Math.max(0, cd[1] - Math.floor(now - nd.why_ts))}s)`);
+  r.why.textContent = lost ? `No message for ${ago(now - nd.last_seen).replace(" ago", "")}` : why;
   if (lost) {
     const prev = document.createElement("span");
     prev.className = "prev";
@@ -284,7 +305,7 @@ function render(nd) {
   r.people.textContent = cnt == null ? "unknown" : cnt;
   r.people.className = "v " + (cnt == null ? "unk" : "");
   const ls = nd.last_sound;
-  r.sound.textContent = ls ? (ls.k === "TAP" ? "Knock" : "Voice") : "none";
+  r.sound.textContent = ls ? (ls.k === "TAP" ? "KNOCKING" : "VOICE") : "none";
   r.sound.className = "v " + (!ls ? "unk" : now - ls.ts < 15 ? "heard" : "");
   r.soundS.textContent = (ls ? ago(now - ls.ts) : "") + (nd.snd != null ? `${ls ? " · " : ""}level ${nd.snd}` : "");
   drawChart(r.chart, nd);
@@ -351,15 +372,46 @@ function addEvent(ev, isNew) {
   const dot = document.createElement("span"); dot.className = "tdot";
   if (!ev.out) {
     const st = /status is now (NO SIGNS|POSSIBLE|LIKELY|CONFIRMED|UNRESPONSIVE)/.exec(ev.desc);
-    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : ev.e === "SOUND" ? "#ff8c1a"
+    const heard = ev.e === "SOUND" || ev.e === "VOICE" || (ev.e === "TAP" && /knocking/.test(ev.desc));
+    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : heard ? "#ff8c1a"
+      : ev.stage === "first" ? STATUS_COLOR.LIKELY : ev.stage === "confirmed" ? STATUS_COLOR.CONFIRMED
       : st ? STATUS_COLOR[st[1]] : "#a3afbc";
+    if (ev.stage) li.classList.add(ev.stage);              // "first" (yellow) / "confirmed" (green)
+    if (ev.e === "STUCK") li.classList.add("stuck");
+    if (ev.stage === "confirmed" && isNew) alertSound();
   }
   const t = document.createElement("time"); t.textContent = hms(ev.ts);
-  const txt = document.createElement("span"); txt.textContent = `Node ${ev.n}: ${ev.desc}`;
+  const txt = document.createElement("span");
+  txt.textContent = `Node ${ev.n}: ${ev.e === "STUCK" ? "⚠ " : ""}${ev.desc}`;
   li.append(dot, t, txt);
   const list = $("timeline");
   list.insertBefore(li, isNew ? list.firstChild : null);
   while (list.children.length > 200) list.lastChild.remove();
+}
+
+// ---------- alert sound (Web Audio, no files needed) ----------
+// Browsers block audio until the user interacts with the page once.
+let audio = null;
+function enableAudio() {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    audio.resume();
+    $("alertsBtn").classList.add("on");
+  } catch (e) { /* no audio support: alerts stay visual only */ }
+}
+document.addEventListener("click", enableAudio, { once: true });
+function alertSound() {
+  if (!audio || audio.state !== "running") return;
+  const t0 = audio.currentTime;
+  [0, 0.25, 0.5].forEach((dt, i) => {        // three rising beeps
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = "square"; o.frequency.value = 880 + i * 220;
+    g.gain.setValueAtTime(0.0001, t0 + dt);
+    g.gain.exponentialRampToValueAtTime(0.25, t0 + dt + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.2);
+    o.connect(g).connect(audio.destination);
+    o.start(t0 + dt); o.stop(t0 + dt + 0.22);
+  });
 }
 
 // ---------- commands ----------

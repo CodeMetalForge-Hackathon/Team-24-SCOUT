@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from base.db import EventDB
 from base.protocol import parse_line, validate_command, describe
-from base.state import State, make_event
+from base.state import State
 
 log = logging.getLogger("base")
 HERE = Path(__file__).resolve().parent
@@ -80,6 +80,10 @@ class Hub:
         text = line.decode("utf-8", "replace") if isinstance(line, (bytes, bytearray)) else str(line)
         text = text.strip()
         msg, err = parse_line(text)
+        if err in ("empty line", "no JSON object"):
+            # normal console text from a node on USB ("EVENT: ...", "STATUS: ...")
+            log.debug("console: %s", text)
+            return
         if err:
             self.bad_lines += 1
             if text:

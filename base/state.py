@@ -2,21 +2,24 @@
 
 The dashboard only ever reads this; it never talks to nodes directly.
 """
+import re
 import time
 from collections import deque
 
-from base.protocol import describe
+from base.protocol import describe, sound_kind
 
 LOST_AFTER = 90          # seconds without any message -> node shown as LOST
 CO2_HISTORY_SECS = 600   # keep ~10 min of CO2 points for the chart
 RECENT_EVENTS = 200      # global timeline length kept in memory
 NODE_EVENTS = 20
+COUNTDOWN = re.compile(r"\(\d+s\)$")
 
 
 def make_event(msg, ts, outgoing=False, ev_id=None):
     """Timeline entry. HB is not interesting enough to show, so callers skip it."""
     return {"id": ev_id, "ts": ts, "n": msg.get("n"), "t": msg.get("t"),
-            "e": msg.get("e"), "out": outgoing, "desc": describe(msg, outgoing)}
+            "e": msg.get("e"), "stage": msg.get("stage"), "out": outgoing,
+            "desc": describe(msg, outgoing)}
 
 
 class Node:
@@ -26,6 +29,7 @@ class Node:
         self.last_seen = ts
         self.status = "NO SIGNS"
         self.why = ""
+        self.why_ts = ts            # when 'why' arrived (lets the page tick a countdown)
         self.rssi = None
         self.bat = None
         self.co2 = None
@@ -44,6 +48,7 @@ class Node:
             "status": "LOST" if lost else self.status,
             "last_status": self.status,     # what it said before going quiet
             "why": f"no message for {int(now - self.last_seen)} s" if lost else self.why,
+            "why_ts": self.why_ts,
             "lost": lost,
             "last_seen": self.last_seen,
             "rssi": self.rssi, "bat": self.bat, "co2": self.co2, "base": self.base,
@@ -69,6 +74,9 @@ class State:
         """Update a node from one parsed message. Returns a timeline event or None."""
         nd = self.node(msg["n"], ts)
         nd.last_seen = max(nd.last_seen, ts)
+        # countdown tick ("press again (15s)" -> "(10s)"): update the card, not the timeline
+        tick = (msg["t"] == "ST" and msg.get("st") == nd.status
+                and COUNTDOWN.search(msg.get("why", "")) and COUNTDOWN.search(nd.why))
         for key in ("rssi", "bat", "co2", "base", "snd"):
             if key in msg:
                 setattr(nd, key, msg[key])
@@ -77,6 +85,7 @@ class State:
             # a heartbeat may omit 'why'; keep the previous reason in that case
             if "why" in msg or msg["t"] == "ST":
                 nd.why = msg.get("why", "")
+                nd.why_ts = ts
         if "dg" in msg:
             nd.danger = bool(msg["dg"])
 
@@ -90,9 +99,10 @@ class State:
                 nd.danger = True        # cleared by the next heartbeat with dg=0
             elif msg["e"] == "ANS":
                 nd.answers[msg["q"]] = msg["a"]
-            elif msg["e"] == "SOUND":
-                nd.last_sound = {"k": msg["k"], "ts": ts}
-        if msg["t"] == "HB":
+            kind = sound_kind(msg)
+            if kind:
+                nd.last_sound = {"k": kind, "ts": ts}
+        if msg["t"] == "HB" or tick:
             return None
         ev = make_event(msg, ts, ev_id=ev_id)
         nd.events.appendleft(ev)
@@ -103,7 +113,12 @@ class State:
         """Log a rescuer command on the timeline."""
         ev = make_event(cmd, ts, outgoing=True, ev_id=ev_id)
         if cmd["n"] in self.nodes:
-            self.nodes[cmd["n"]].events.appendleft(ev)
+            nd = self.nodes[cmd["n"]]
+            nd.events.appendleft(ev)
+            if cmd["t"] == "RESET":   # false alarm: forget what the survivor "said"
+                nd.answers = {"injured": None, "count": None}
+                nd.last_sound = None
+                nd.danger = False
         self.events.appendleft(ev)
         return ev
 
