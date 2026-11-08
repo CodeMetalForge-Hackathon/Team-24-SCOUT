@@ -7,8 +7,9 @@ so the parser NEVER raises: it returns (msg, None) or (None, "why it was rejecte
 import json
 
 STATUSES = ("NO SIGNS", "POSSIBLE", "LIKELY", "CONFIRMED", "UNRESPONSIVE")
-EVENTS = ("BTN", "TAP", "NORESP", "SHIFT", "ANS", "SOUND")
-SOUND_KINDS = ("TAP", "VOICE")   # SOUND event: knock vs. sustained voice heard by the mic
+EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND")
+SOUND_KINDS = ("TAP", "VOICE")   # SOUND event (older nodes): knock vs. sustained voice
+BTN_STAGES = ("first", "confirmed")
 QUESTIONS = ("injured", "count")
 MSG_MAX = 60  # node screen fits ~60 characters
 
@@ -91,7 +92,20 @@ def parse_line(line):
             if k not in SOUND_KINDS:
                 return None, "SOUND needs k (TAP/VOICE)"
             msg["k"] = k
+        elif e == "BTN" and raw.get("stage") in BTN_STAGES:
+            msg["stage"] = raw["stage"]
     return msg, None
+
+
+def sound_kind(msg):
+    """'TAP' / 'VOICE' if this message is a sound the mic heard, else None.
+    A TAP *with* a count is a tap-back after a call, not an unprompted knock."""
+    e = msg.get("e")
+    if e == "VOICE" or (e == "TAP" and "taps" not in msg):
+        return e
+    if e == "SOUND":
+        return msg.get("k")
+    return None
 
 
 def validate_command(cmd):
@@ -118,7 +132,9 @@ def validate_command(cmd):
         if q not in QUESTIONS:
             raise ValueError("question must be 'injured' or 'count'")
         return {"t": "ASK", "n": n, "q": q}
-    raise ValueError("t must be CALL, MSG or ASK")
+    if t == "RESET":
+        return {"t": "RESET", "n": n}
+    raise ValueError("t must be CALL, MSG, ASK or RESET")
 
 
 def describe(msg, outgoing=False):
@@ -132,6 +148,8 @@ def describe(msg, outgoing=False):
         if t == "ASK":
             return {"injured": "Rescuer asked: are you injured?",
                     "count": "Rescuer asked: how many people?"}.get(msg.get("q"), "Rescuer asked a question")
+        if t == "RESET":
+            return "Rescuer reset the node (false alarm)"
         return f"Rescuer sent {t}"
     if t == "HB":
         return f"heartbeat ({msg.get('st', '?')})"
@@ -140,7 +158,17 @@ def describe(msg, outgoing=False):
         return f"status is now {msg['st']}" + (f": {why}" if why else "")
     e = msg.get("e")
     if e == "BTN":
+        stage = msg.get("stage")
+        if stage == "first":
+            return "Button pressed once — waiting for confirmation"
+        if stage == "confirmed":
+            return "SURVIVOR CONFIRMED: pressed twice"
         return "survivor pressed the PRESS ME button"
+    if e == "STUCK":
+        return "Button held down — possible debris"
+    kind = sound_kind(msg)
+    if kind:
+        return "heard knocking" if kind == "TAP" else "heard a voice"
     if e == "TAP":
         taps = msg.get("taps")
         return f"tapped back {taps} times after call" if taps else "tapped back after call"
@@ -149,8 +177,6 @@ def describe(msg, outgoing=False):
         return f"no answer to call ({calls} unanswered)" if calls else "no answer to call"
     if e == "SHIFT":
         return "PILE MOVEMENT detected: clear the area"
-    if e == "SOUND":
-        return "heard a knock" if msg.get("k") == "TAP" else "heard a voice"
     if e == "ANS":
         q, a = msg.get("q"), msg.get("a")
         if q == "injured":

@@ -40,6 +40,18 @@ class ParseValid(unittest.TestCase):
         self.assertEqual(describe(msg), "heard a voice")
         self.assertIsNone(parse_line('{"t":"EV","n":1,"e":"SOUND","k":"SING"}')[0])
 
+    def test_button_stages_stuck_and_sounds(self):
+        cases = [('{"t":"EV","n":1,"e":"BTN","stage":"first"}', "Button pressed once — waiting for confirmation"),
+                 ('{"t":"EV","n":1,"e":"BTN","stage":"confirmed"}', "SURVIVOR CONFIRMED: pressed twice"),
+                 ('{"t":"EV","n":1,"e":"STUCK"}', "Button held down — possible debris"),
+                 ('{"t":"EV","n":1,"e":"TAP"}', "heard knocking"),
+                 ('{"t":"EV","n":1,"e":"VOICE"}', "heard a voice"),
+                 ('{"t":"EV","n":1,"e":"TAP","taps":3}', "tapped back 3 times after call")]
+        for line, text in cases:
+            msg, err = parse_line(line)
+            self.assertIsNone(err, line)
+            self.assertEqual(describe(msg), text)
+
     def test_count_answer_number(self):
         msg, err = parse_line('{"t":"EV","n":1,"e":"ANS","q":"count","a":2}')
         self.assertIsNone(err)
@@ -97,6 +109,7 @@ class Commands(unittest.TestCase):
         self.assertEqual(validate_command({"t": "CALL", "n": 1}), {"t": "CALL", "n": 1})
         self.assertEqual(validate_command({"t": "ASK", "n": 1, "q": "count"})["q"], "count")
         self.assertEqual(validate_command({"t": "MSG", "n": 1, "txt": " Hi "})["txt"], "Hi")
+        self.assertEqual(validate_command({"t": "RESET", "n": 1}), {"t": "RESET", "n": 1})
 
     def test_invalid(self):
         for cmd in [{"t": "MSG", "n": 1, "txt": ""}, {"t": "MSG", "n": 1, "txt": "x" * 61},

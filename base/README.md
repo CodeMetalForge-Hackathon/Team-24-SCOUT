@@ -29,10 +29,21 @@ source .venv/bin/activate
 # Demo / development: fake nodes, no hardware needed
 python -m base.app --source sim
 
-# Real receiver plugged in by USB
-python -m base.app --source serial --port /dev/ttyACM0          # Pi
+# Real hardware on USB: a node Feather directly (no radio yet), or later the LoRa receiver
 python -m base.app --source serial --port /dev/cu.usbmodem1234   # Mac
+python -m base.app --source serial --port /dev/ttyACM0          # Pi
 ```
+
+**Reading a node directly over USB (current setup, until LoRa works):** the node prints the
+same JSON lines the radio will carry, alongside its normal debug text (`EVENT: ...`,
+`STATUS: ...`), which the app skips. Commands from the dashboard (Reset, messages) go back
+down the same USB cable.
+
+1. **Close Mu's Serial panel** (or quit Mu). Only one program can use the port at a time.
+2. Find the port: `ls /dev/cu.usbmodem*`
+3. Run `python -m base.app --source serial --port /dev/cu.usbmodem…` and open http://localhost:8000.
+
+To see Mu's console again, stop the app first (Ctrl-C).
 
 Open **http://localhost:8000**. When the app starts, it prints the address other laptops on the switch
 should use, e.g. `http://192.168.1.20:8000`. On a Mac, click **Allow** if the firewall asks.
@@ -40,11 +51,16 @@ should use, e.g. `http://192.168.1.20:8000`. On a Mac, click **Allow** if the fi
 Options: `--http-port 8000`, `--baud 115200`, `--db path.db`, `--one-node` (simulator with node 1 only).
 
 ### What the simulator does
-Node 1 loops a ~110 s story: NO SIGNS → POSSIBLE (CO₂ 650→1100) → 2 unanswered calls →
-UNRESPONSIVE → taps back → LIKELY → button → CONFIRMED → answers injured=yes, count=2 →
-pile shift (DANGER) → restart. Node 2 stays NO SIGNS. The buttons work:
+The fake nodes run the **real node logic** (`firmware/node/assess.py`), so statuses and countdowns
+match the board exactly. Node 1 loops a ~120 s story: hears a voice → POSSIBLE → an
+**accidental single press** → LIKELY countdown → expires to POSSIBLE "single press, not confirmed"
+→ knocking → a real press + second press → CONFIRMED → answers injured=yes, count=2 → pile shift
+(DANGER) → stuck button → restart. Node 2 stays NO SIGNS. The buttons work:
 **Call now** gets taps back after 3 s (node 2 stays silent and reports "no answer" after 10 s),
-and **Ask** gets an answer after 3 s.
+**Ask** gets an answer after 3 s, and **Reset** clears the node and restarts its story.
+
+Click **🔔 Enable alert sound** once: browsers only play sound after you've clicked on the page.
+CONFIRMED then plays three rising beeps.
 
 ## Finding the serial port
 
@@ -91,17 +107,21 @@ Node → base (the receiver adds `rssi`). Lines that aren't valid are logged and
 
 | Line | Meaning |
 |---|---|
-| `{"t":"HB","n":1,"st":"POSSIBLE","why":"CO2 rising","co2":812,"base":640,"bat":87,"dg":0,"rssi":-48}` | heartbeat, every 30 s |
-| `{"t":"ST","n":1,"st":"LIKELY","why":"tapped back after call"}` | status changed |
-| `{"t":"EV","n":1,"e":"BTN"}` | PRESS ME pressed |
-| `{"t":"EV","n":1,"e":"TAP","taps":4}` | tapped back after a call |
+| `{"t":"HB","n":1,"st":"POSSIBLE","why":"CO2 rising","co2":812,"base":640,"bat":87,"dg":0,"rssi":-48}` | heartbeat, every 10 s (demo) / 30 s |
+| `{"t":"ST","n":1,"st":"LIKELY","why":"pressed once - press again (14s)"}` | status changed (countdown ticks at most every 5 s; the page counts down in between) |
+| `{"t":"EV","n":1,"e":"BTN","stage":"first"}` | PRESS ME pressed once: waiting for a 2nd press within 20 s |
+| `{"t":"EV","n":1,"e":"BTN","stage":"confirmed"}` | pressed twice: **survivor confirmed** (alert sound) |
+| `{"t":"EV","n":1,"e":"STUCK"}` | button held ≥ 5 s: probably debris, press ignored |
+| `{"t":"EV","n":1,"e":"TAP"}` / `{"t":"EV","n":1,"e":"VOICE"}` | mic heard knocking / a voice |
+| `{"t":"EV","n":1,"e":"TAP","taps":4}` | tapped back after a call (has a count) |
 | `{"t":"EV","n":1,"e":"NORESP","calls":2}` | call went unanswered |
 | `{"t":"EV","n":1,"e":"SHIFT"}` | pile movement (DANGER) |
 | `{"t":"EV","n":1,"e":"ANS","q":"injured","a":"yes"}` | survivor answered a question |
 
 Base → node (written to the receiver's serial port, one line each):
 `{"t":"CALL","n":1}`, `{"t":"MSG","n":1,"txt":"Help is coming. Stay still."}` (max 60 chars),
-`{"t":"ASK","n":1,"q":"injured"}` or `"q":"count"`.
+`{"t":"ASK","n":1,"q":"injured"}` or `"q":"count"`, `{"t":"RESET","n":1}` (false alarm: node
+forgets all evidence). The node handles RESET and MSG today; CALL and ASK come later.
 
 Statuses: `NO SIGNS`, `POSSIBLE`, `LIKELY`, `CONFIRMED`, `UNRESPONSIVE`. The dashboard shows
 `LOST` itself when it hasn't heard from a node for 90 s.
@@ -125,6 +145,7 @@ Statuses: `NO SIGNS`, `POSSIBLE`, `LIKELY`, `CONFIRMED`, `UNRESPONSIVE`. The das
 | `db.py` | SQLite log: `events(ts, node, type, dir, raw)` |
 | `sources.py` | `SerialSource`: reads the receiver in a background thread, reconnects |
 | `simulator.py` | `SimSource`: the fake demo nodes |
+| `node_brain.py` | loads `firmware/node/assess.py` so the simulator and tests use the real node rules |
 | `static/index.html` | the dashboard (vanilla JS, canvas chart) |
 
 Logs: `base/events.db` (serial) and `base/events_sim.db` (simulator, kept separate so fake
