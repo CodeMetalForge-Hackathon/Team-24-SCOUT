@@ -31,7 +31,6 @@ Protocol	Message parsing, command validation, and unit tests
 | Grove speaker | Produces audible beep signals |
 | Push button | Supports deliberate user interaction |
 | Microphone / sound sensor, if fitted | Supplies audio input for event detection |
-| Mac or Raspberry Pi | Hosts the base-station software |
 | Breadboard, jumper wires, and power source | Support prototype assembly and testing |
 
 
@@ -54,6 +53,7 @@ CO₂ concentration is reported in ppm. Interpretation depends on airflow, space
 git clone https://github.com/CodeMetalForge-Hackathon/Team-24.git
 cd Team-24
 2. Choose a test path
+
 | Path | Purpose |
 |---|---|
 | Simulator | Exercise dashboard states and decision scenarios without connected nodes |
