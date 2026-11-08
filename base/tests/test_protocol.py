@@ -215,3 +215,20 @@ class CompactMessages(unittest.TestCase):
     def test_bad_evidence_values_dropped(self):
         msg, _ = parse_line('{"t":"ST","n":1,"st":"POSSIBLE","ev":{"btn":"maybe","co2":"WEIRD","miss":"x"}}')
         self.assertEqual(msg["ev"], {})
+
+
+class LocationMessages(unittest.TestCase):
+    def test_loc_sources(self):
+        msg, err = parse_line('{"t":"LOC","n":1,"src":"LAST","lat":42.36031,"lon":-71.0588,"acc":8,"age":312,"sats":7}')
+        self.assertIsNone(err)
+        self.assertEqual((msg["src"], msg["age"], msg["acc"]), ("LAST", 312, 8))
+        self.assertEqual(parse_line('{"t":"LOC","n":3,"src":"NONE"}')[0]["src"], "NONE")
+        self.assertIsNone(parse_line('{"t":"LOC","n":1,"src":"LIVE","lat":99,"lon":0}')[0])
+        self.assertIsNone(parse_line('{"t":"LOC","n":1,"src":"MARS"}')[0])
+
+    def test_setloc_command(self):
+        cmd = validate_command({"t": "SETLOC", "n": 3, "lat": "42.36", "lon": -71.05, "label": " Site B NE corner "})
+        self.assertEqual(cmd, {"t": "SETLOC", "n": 3, "lat": 42.36, "lon": -71.05, "label": "Site B NE corner"})
+        for bad in ({"lat": 91, "lon": 0}, {"lat": 0, "lon": 181}, {"lat": "x", "lon": 0}):
+            with self.assertRaises(ValueError):
+                validate_command({"t": "SETLOC", "n": 1, **bad})

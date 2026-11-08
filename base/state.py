@@ -66,6 +66,8 @@ class Node:
         self.mic = None             # "on" / "muted" (from the last heartbeat)
         self.parts = None           # BOOT self-check: {"sound": True, "co2": False, ...}
         self.ev = None              # evidence snapshot from the last ST/HB (why this status)
+        self.loc = None             # {"src","lat","lon","acc","age","sats","label"}
+        self.loc_ts = None          # when that LOC arrived (age grows from there)
         self.events = deque(maxlen=NODE_EVENTS)
 
     def to_dict(self, now):
@@ -89,7 +91,7 @@ class Node:
             "call_state": self.call_state, "call_ts": self.call_ts,
             "listen_end": self.listen_end, "next_call_at": self.next_call_at,
             "calls_unanswered": self.calls_unanswered, "mic": self.mic, "parts": self.parts,
-            "ev": self.ev,
+            "ev": self.ev, "loc": self.loc, "loc_ts": self.loc_ts,
             "events": list(self.events),
         }
 
@@ -183,8 +185,14 @@ class State:
             kind = sound_kind(msg)
             if kind:
                 nd.last_sound = {"k": kind, "ts": ts}
+        quiet_loc = False
+        if msg["t"] == "LOC":                   # timeline only when the source changes
+            prev = nd.loc["src"] if nd.loc else None
+            nd.loc = {k: msg[k] for k in ("src", "lat", "lon", "acc", "age", "sats", "label") if k in msg}
+            nd.loc_ts = ts
+            quiet_loc = msg["src"] == prev
         quiet_beep = msg["t"] == "EV" and msg["e"] == "BEEP"   # always duplicates another entry
-        if msg["t"] in ("HB", "SN") or tick or quiet_co2 or quiet_beep:
+        if msg["t"] in ("HB", "SN") or tick or quiet_co2 or quiet_beep or quiet_loc:
             return None
         ev = make_event(msg, ts, ev_id=ev_id)
         nd.events.appendleft(ev)

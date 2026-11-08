@@ -41,7 +41,8 @@ _ALIASES = {"cs": "call_state", "ll": "listen_left", "nc": "next_call_in", "rhb"
 EV_CHOICES = {"btn": ("none", "first", "confirmed"), "snd": ("none", "TAP", "VOICE"),
               "co2": CO2_LEVELS + ("NONE",)}
 EV_NUMBERS = ("resp", "miss", "dg")
-MSG_TYPES = ("HB", "ST", "EV", "SN")
+MSG_TYPES = ("HB", "ST", "EV", "SN", "LOC")
+LOC_SOURCES = ("LIVE", "LAST", "MANUAL", "NONE")
 
 
 def _num(value, kind):
@@ -123,6 +124,23 @@ def parse_line(line):
         return None, "ST message without 'st'"
     if isinstance(raw.get("why"), str):
         msg["why"] = raw["why"][:120]
+
+    if t == "LOC":
+        src = raw.get("src")
+        if src not in LOC_SOURCES:
+            return None, "LOC needs src (LIVE/LAST/MANUAL/NONE)"
+        msg["src"] = src
+        if src != "NONE":
+            lat, lon = _num(raw.get("lat"), float), _num(raw.get("lon"), float)
+            if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                return None, "LOC needs a valid lat/lon"
+            msg["lat"], msg["lon"] = lat, lon
+            for key in ("acc", "age", "sats"):
+                val = _num(raw.get(key), int)
+                if val is not None:
+                    msg[key] = val
+            if isinstance(raw.get("label"), str):
+                msg["label"] = raw["label"][:30]
 
     if t == "EV":
         e = raw.get("e")
@@ -215,7 +233,15 @@ def validate_command(cmd):
         if not isinstance(cmd.get("on"), bool):
             raise ValueError("danger needs on: true or false")
         return {"t": "DANGER", "n": n, "on": cmd["on"]}
-    raise ValueError("t must be CALL, MSG, ASK, DANGER or RESET")
+    if t == "SETLOC":
+        lat, lon = _num(cmd.get("lat"), float), _num(cmd.get("lon"), float)
+        if lat is None or not -90 <= lat <= 90:
+            raise ValueError("latitude must be a number from -90 to 90")
+        if lon is None or not -180 <= lon <= 180:
+            raise ValueError("longitude must be a number from -180 to 180")
+        label = cmd.get("label") if isinstance(cmd.get("label"), str) else ""
+        return {"t": "SETLOC", "n": n, "lat": lat, "lon": lon, "label": label.strip()[:20]}
+    raise ValueError("t must be CALL, MSG, ASK, DANGER, SETLOC or RESET")
 
 
 def describe(msg, outgoing=False):
@@ -233,11 +259,23 @@ def describe(msg, outgoing=False):
             return "Rescuer reset the node (false alarm)"
         if t == "DANGER":
             return "Rescuer turned the danger alarm " + ("ON (test)" if msg.get("on") else "off")
+        if t == "SETLOC":
+            label = f' "{msg["label"]}"' if msg.get("label") else ""
+            return f"Rescuer set the location manually: {msg['lat']:.5f}, {msg['lon']:.5f}{label}"
         return f"Rescuer sent {t}"
     if t == "HB":
         return f"heartbeat ({msg.get('st', '?')})"
     if t == "SN":
         return "sensor readings"
+    if t == "LOC":
+        src = msg["src"]
+        if src == "LIVE":
+            return "Location: GPS fix" + (f" (±{msg['acc']} m est.)" if "acc" in msg else "")
+        if src == "LAST":
+            return "Location: GPS fix lost, using last known position"
+        if src == "MANUAL":
+            return "Location: set manually" + (f" ({msg['label']})" if msg.get("label") else "")
+        return "Location: unknown (no GPS fix)"
     if t == "ST":
         why = msg.get("why")
         if msg["st"] == "UNRESPONSIVE" and why:
