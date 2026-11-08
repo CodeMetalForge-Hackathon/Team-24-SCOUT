@@ -12,6 +12,7 @@ Fully offline: the dashboard is one local HTML file, no CDNs.
 """
 import argparse
 import asyncio
+import random
 import contextlib
 import csv
 import json
@@ -60,10 +61,16 @@ def hhmm(ts):
 class Hub:
     """Owns the state and fans updates out to every open dashboard."""
 
-    def __init__(self, source, db, archive_dir=ARCHIVE_DIR):
+    def __init__(self, source, db, archive_dir=ARCHIVE_DIR, net_id="T24"):
         self.source = source
         self.db = db
         self.archive_dir = archive_dir
+        self.net_id = net_id         # only messages with this network ID ("" = accept all)
+        self.foreign = 0             # messages from other networks, dropped
+        self.duplicates = 0          # repeated copies (urgent x3 / radio echoes), dropped
+        self._seen = {}              # (node, id) -> time first received
+        self.link_type = None        # "ESP-NOW" (packets come with rssi) or "USB"
+        self._cmd_id = random.randint(1, 9000)    # ids for our commands (the node drops repeats)
         self.state = State()
         self.clients = set()
         self.loop = None
@@ -128,6 +135,20 @@ class Hub:
                 self._last_bad_log = ts
             return
         n = msg["n"]
+        # other teams' packets: never shown, never stored
+        if self.net_id and msg.get("net") != self.net_id:
+            self.foreign += 1
+            log.debug("ignored message from another network: %.80r", text)
+            return
+        # urgent messages arrive 3 times with the same id: keep the first
+        if "id" in msg:
+            for key in [k for k, t0 in self._seen.items() if ts - t0 > 10]:
+                del self._seen[key]
+            if (n, msg["id"]) in self._seen:
+                self.duplicates += 1
+                return
+            self._seen[(n, msg["id"])] = ts
+        self.link_type = "ESP-NOW" if "rssi" in msg else "USB"
         before = self.state.nodes.get(n)
         prev_status = before.status if before else None
         prev_danger = before.danger if before else False
@@ -138,7 +159,7 @@ class Hub:
             log.info("node %s: %s", n, ev["desc"])
         nd = self.state.nodes[n]
         self._push({"type": "node", "node": nd.to_dict(ts), "event": ev,
-                    "server_time": time.time(), "last_rx": self.last_rx})
+                    "server_time": time.time(), "last_rx": self.last_rx, "link_type": self.link_type})
 
         # alerts: the moments a responder must not miss
         if nd.status != prev_status and nd.status in ("UNRESPONSIVE", "CONFIRMED"):
@@ -258,7 +279,7 @@ class Hub:
         keep: {"gps", "team", "notes", "tag"} -> bool."""
         by = (by or "").strip()[:30] or "Operator"
         # 1. tell the node (ConnectionError -> nothing is cleared)
-        await asyncio.to_thread(self.source.send, {"t": "REBOOT", "n": n, "keep_gps": bool(keep.get("gps", True))})
+        await asyncio.to_thread(self.source.send, self.stamp({"t": "REBOOT", "n": n, "keep_gps": bool(keep.get("gps", True))}))
         ts = time.time()
         # 2. archive, 3. delete from the live tables
         archived = self.archive(n, ts)
@@ -287,7 +308,7 @@ class Hub:
         not_reached = []
         for n in sorted(self.state.nodes):
             try:
-                await asyncio.to_thread(self.source.send, {"t": "REBOOT", "n": n, "keep_gps": bool(keep_gps)})
+                await asyncio.to_thread(self.source.send, self.stamp({"t": "REBOOT", "n": n, "keep_gps": bool(keep_gps)}))
             except Exception as exc:              # e.g. a LOST node: archive + clear anyway
                 not_reached.append(n)
                 log.warning("REBOOT to node %s failed: %s", n, exc)
@@ -310,7 +331,7 @@ class Hub:
         not_reached = []
         for n in sorted(self.state.nodes):
             try:
-                await asyncio.to_thread(self.source.send, {"t": "PAUSE", "n": n, "on": bool(on)})
+                await asyncio.to_thread(self.source.send, self.stamp({"t": "PAUSE", "n": n, "on": bool(on)}))
             except Exception:
                 not_reached.append(n)
         self.db.set_kv("paused", bool(on))
@@ -319,8 +340,14 @@ class Hub:
         return not_reached
 
     # ---------- outgoing ----------
+    def stamp(self, cmd):
+        """Add our network ID and a command id: the receiver broadcasts each command
+        3 times and the node handles the first copy only."""
+        self._cmd_id = self._cmd_id % 9999 + 1
+        return {**cmd, "net": self.net_id or "T24", "id": self._cmd_id}
+
     async def command(self, cmd):
-        cmd = validate_command(cmd)            # ValueError -> 400
+        cmd = self.stamp(validate_command(cmd))            # ValueError -> 400
         # serial writes can block briefly; keep the web server responsive
         await asyncio.to_thread(self.source.send, cmd)   # ConnectionError -> 503
         ts = time.time()
@@ -338,7 +365,8 @@ class Hub:
         now = time.time()
         return {"type": "full", "server_time": now, "nodes": list(self.state.snapshot(now).values()),
                 "events": list(self.state.events)[:300], "source": self.source_info(),
-                "bad_lines": self.bad_lines, "last_rx": self.last_rx,
+                "bad_lines": self.bad_lines, "last_rx": self.last_rx, "link_type": self.link_type,
+                "foreign": self.foreign, "duplicates": self.duplicates,
                 "meta": self.db.get_kv(), "node_meta": self.db.get_node_meta(), "alerts": self.db.alerts()}
 
     def _push(self, payload):
@@ -377,12 +405,12 @@ async def _json_body(request):
     return body
 
 
-def create_app(source, db_path, defaults=None):
+def create_app(source, db_path, defaults=None, net_id="T24"):
     db = EventDB(db_path)
     for key, value in (defaults or {}).items():    # e.g. simulator: a base location to start with
         if key not in db.get_kv():
             db.set_kv(key, value)
-    hub = Hub(source, db)
+    hub = Hub(source, db, net_id=net_id)
 
     @contextlib.asynccontextmanager
     async def lifespan(app):
@@ -538,6 +566,7 @@ def main():
     p.add_argument("--http-port", type=int, default=8000)
     p.add_argument("--db", help="SQLite file (default: base/events.db, or base/events_sim.db in sim mode)")
     p.add_argument("--one-node", action="store_true", help="simulator: only node 1")
+    p.add_argument("--net", default="T24", help='network ID to accept (default T24; "" = accept every message)')
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -558,7 +587,8 @@ def main():
     import uvicorn
     print(f"\n  Dashboard:  http://localhost:{args.http_port}   (other laptops: http://{lan_ip()}:{args.http_port})"
           f"\n  Source:     {args.source}{' ' + args.port if args.port else ''}\n  Log DB:     {db}\n")
-    uvicorn.run(create_app(source, db, defaults), host=args.host, port=args.http_port, log_level="warning")
+    uvicorn.run(create_app(source, db, defaults, net_id=args.net), host=args.host, port=args.http_port,
+                log_level="warning")
 
 
 if __name__ == "__main__":

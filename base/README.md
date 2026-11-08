@@ -113,6 +113,39 @@ sudo systemctl enable --now rubble-base
 journalctl -u rubble-base -f        # live log
 ```
 
+## Wireless link
+
+```
+node (Feather ESP32-S3) ──ESP-NOW broadcast──> LilyGO ESP32 receiver ──USB, 1 JSON line per packet──> base/app.py
+                        <──────── commands: the receiver broadcasts each one 3x ────────
+```
+
+**Prototype: ESP-NOW.** Direct ESP32-to-ESP32 radio: no router, no WiFi network, no pairing. Each node
+broadcasts every message (it still prints it to USB too). The LilyGO receiver keeps only packets with our
+network ID `"net":"T24"` (other teams broadcast ESP-NOW too), adds `rssi` and prints one JSON line per packet.
+Measured: received at RSSI about −26 dBm at 1 m.
+
+**Production: LoRa.** The LilyGO already has a LoRa radio. LoRa reaches kilometres and gets through rubble
+much better than 2.4 GHz. **The message protocol is identical**, so the radio is swappable without changing
+the node logic or the dashboard (`LINK_TYPE` in `firmware/node/config.py`).
+
+How it stays reliable:
+- every message has `net` + a short `id`; **urgent** ones (button presses, call answers / missed calls, danger,
+  status UNRESPONSIVE / CONFIRMED) are sent **3 times ~100 ms apart with the same id**. The base keeps the first
+  copy (same node + id within 10 s) and drops the rest;
+- the base ignores everything without `"net":"T24"` (`--net` to change it) and every non-JSON line (the
+  receiver's boot text);
+- commands from the dashboard get `net` + `id`; the receiver broadcasts each 3 times and the node handles it
+  once (same id within 5 s). The node only accepts our network ID, its own node number and known commands;
+- nothing received over the air can crash the node: malformed packets ("Invalid buffer"), non-text and
+  non-JSON payloads are skipped. If ESP-NOW doesn't start, the node carries on USB-only.
+
+**Run it:** plug the LilyGO into the laptop, power the node from a power bank, then
+`python -m base.app --source serial --port /dev/cu.usbserial-…` (find it with `ls /dev/cu.*`; the LilyGO often
+shows up as `usbserial` or `wchusbserial`; add `--baud` if its sketch doesn't use 115200).
+The dashboard shows the link type (ESP-NOW / USB), each node's RSSI and link quality: **good** (> −70 dBm),
+**weak** (−70 to −85), **poor** (< −85), **lost** (no message for 30 s).
+
 ## Message protocol
 
 One JSON object per line, every message < 200 bytes so it fits one LoRa packet. The receiver

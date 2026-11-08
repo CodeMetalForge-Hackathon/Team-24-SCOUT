@@ -18,7 +18,7 @@ class FakeSource:
 class HubTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.hub = Hub(FakeSource(), EventDB(os.path.join(self.tmp.name, "t.db")))
+        self.hub = Hub(FakeSource(), EventDB(os.path.join(self.tmp.name, "t.db")), net_id="")
 
     def tearDown(self):
         self.hub.db.conn.close()
@@ -70,7 +70,7 @@ class HubTests(unittest.TestCase):
 
     def test_notes_survive_restart(self):
         self.hub.set_node_meta({"n": 2, "team": "Team Alpha", "by": "Ana"})
-        hub2 = Hub(FakeSource(), self.hub.db)
+        hub2 = Hub(FakeSource(), self.hub.db, net_id="")
         hub2.replay()
         self.assertIn("Assigned to Team Alpha by Ana", [e["desc"] for e in hub2.state.events])
 
@@ -86,11 +86,13 @@ class PauseAll(unittest.TestCase):
         sent = []
         src = FakeSource()
         src.send = sent.append
-        hub = Hub(src, EventDB(os.path.join(tmp.name, "t.db")))
+        hub = Hub(src, EventDB(os.path.join(tmp.name, "t.db")), net_id="")
         for n in (1, 2):
             hub.handle_line(f'{{"t":"HB","n":{n},"st":"NO SIGNS"}}', 1)
         asyncio.run(hub.pause_all(True, "Ana"))
-        self.assertEqual(sent, [{"t": "PAUSE", "n": 1, "on": True}, {"t": "PAUSE", "n": 2, "on": True}])
+        self.assertEqual([{k: v for k, v in c.items() if k not in ("id", "net")} for c in sent],
+                         [{"t": "PAUSE", "n": 1, "on": True}, {"t": "PAUSE", "n": 2, "on": True}])
+        self.assertTrue(all(c["net"] == "T24" and isinstance(c["id"], int) for c in sent))
         self.assertTrue(hub.db.get_kv()["paused"])
         self.assertIn("All nodes paused (demo) by Ana", hub.state.events[0]["desc"])
         hub.db.conn.close()

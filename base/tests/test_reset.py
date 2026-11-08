@@ -26,7 +26,7 @@ class ResetTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.src = FakeSource()
-        self.hub = Hub(self.src, EventDB(str(self.dir / "t.db")), archive_dir=self.dir / "archive")
+        self.hub = Hub(self.src, EventDB(str(self.dir / "t.db")), archive_dir=self.dir / "archive", net_id="")
         self.hub.set_meta({"incident": "Collapse Main St", "base": {"lat": 42.36, "lon": -71.05}})
         for n in (1, 2):
             self.hub.handle_line(f'{{"t":"EV","n":{n},"e":"BOOT","sensors":{{"sound":true}}}}', 1)
@@ -49,7 +49,8 @@ class ResetTests(unittest.TestCase):
     def test_full_reset_archives_then_clears_only_that_node(self):
         before = len(self.node_rows(1))
         archived = self.run_async(self.hub.full_reset(1, {"gps": True}, "Ana"))
-        self.assertEqual(self.src.sent[-1], {"t": "REBOOT", "n": 1, "keep_gps": True})
+        sent = {k: v for k, v in self.src.sent[-1].items() if k not in ("id", "net")}
+        self.assertEqual(sent, {"t": "REBOOT", "n": 1, "keep_gps": True})
         # archive: JSON + CSV with node 1's history, alerts and state
         data = json.loads((self.dir / "archive" / archived).read_text())
         self.assertTrue(archived.startswith("Collapse-Main-St_node1_"))
@@ -108,7 +109,7 @@ class ResetTests(unittest.TestCase):
 
     def test_reset_survives_restart_of_the_base(self):
         self.run_async(self.hub.full_reset(1, {}, "Ana"))
-        hub2 = Hub(FakeSource(), self.hub.db, archive_dir=self.dir / "archive")
+        hub2 = Hub(FakeSource(), self.hub.db, archive_dir=self.dir / "archive", net_id="")
         hub2.replay()
         n1 = [e for e in hub2.state.events if e["n"] == 1]
         self.assertEqual(len(n1), 1)
