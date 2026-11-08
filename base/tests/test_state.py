@@ -70,5 +70,29 @@ class ReasonTicks(unittest.TestCase):
         self.assertIsNotNone(apply(s, '{"t":"EV","n":1,"e":"CO2","lvl":"ELEVATED","prev":"NORMAL"}', 490))
 
 
+class CallCycle(unittest.TestCase):
+    def test_call_listen_and_unanswered(self):
+        s = State()
+        apply(s, '{"t":"HB","n":1,"prof":"DEMO","call_state":"IDLE","next_call_in":12,"calls_unanswered":1}', 100)
+        nd = s.snapshot(101)[1]
+        self.assertEqual((nd["call_state"], nd["next_call_at"], nd["calls_unanswered"]), ("IDLE", 112, 1))
+        self.assertIsNotNone(apply(s, '{"t":"EV","n":1,"e":"CALL"}', 112))
+        nd = s.snapshot(113)[1]
+        self.assertEqual(nd["call_state"], "CALLING")
+        self.assertAlmostEqual(nd["listen_end"], 112 + 2.4 + 10)
+        apply(s, '{"t":"EV","n":1,"e":"NORESP","calls":2}', 124.4)
+        nd = s.snapshot(125)[1]
+        self.assertEqual((nd["call_state"], nd["calls_unanswered"]), ("IDLE", 2))
+        self.assertAlmostEqual(nd["next_call_at"], 144.4)
+        apply(s, '{"t":"EV","n":1,"e":"RESP","kind":"TAP","taps":3}', 150)
+        self.assertEqual(s.snapshot(151)[1]["calls_unanswered"], 0)
+
+    def test_danger_and_quiet_beeps(self):
+        s = State()
+        self.assertIsNotNone(apply(s, '{"t":"EV","n":1,"e":"DANGER","on":true}', 1))
+        self.assertTrue(s.snapshot(2)[1]["danger"])
+        self.assertIsNone(apply(s, '{"t":"EV","n":1,"e":"BEEP","p":"AGAIN"}', 3))   # not on the timeline
+
+
 if __name__ == "__main__":
     unittest.main()

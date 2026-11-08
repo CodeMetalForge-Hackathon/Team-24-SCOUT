@@ -7,8 +7,8 @@ NODE_ID = 1
 # "FIELD": tuned for real rubble: smaller, slower CO2 changes (see docs/co2.md)
 PROFILE = "DEMO"
 DEMO_MODE = PROFILE == "DEMO"
-CALL_INTERVAL = 20 if DEMO_MODE else 60   # seconds between "calls"
-ACTIVITY_WINDOW = 15 if DEMO_MODE else 120
+ACTIVITY_WINDOW = 15 if DEMO_MODE else 120   # unprompted knock/voice stays "recent" this long
+RESPONSE_WINDOW = 60 if DEMO_MODE else 300   # a tap-back/voice after a call stays "recent" this long
 HEARTBEAT_INTERVAL = 10 if DEMO_MODE else 30  # seconds between {"t":"HB"} report lines
 ST_MIN_INTERVAL = 5          # while counting down, send an ST line at most every 5 s
 
@@ -21,6 +21,32 @@ STUCK_SECS = 5               # held this long = debris on the button, not a pers
 ENABLE_VIBRATION = False     # set True once the vibration sensor is wired to 3V/GND/5
 ENABLE_SOUND = True
 ENABLE_CO2 = True            # SCD41 on the SEN-25200 via STEMMA QT / I2C
+ENABLE_TILT = False          # tilt switch on D6 -> DANGER siren (not wired yet)
+
+# ---- call-and-listen ----
+CALL_INTERVAL = 20 if DEMO_MODE else 60   # seconds from the end of one call to the next
+LISTEN_SECS = 10             # listen this long after the 3 call beeps
+RESPONSE_MIN_TAPS = 2        # this many knocks (or any voice) while listening = an answer
+PROMPT_SECS = 10             # "WE HEAR YOU. PRESS THE RED BUTTON" stays this long
+MESSAGE_SECS = 15            # rescuer message stays on screen this long
+DANGER_REPEAT = 10           # replay the siren every N s while DANGER is on
+TILT_HOLD = 30               # tilt switch moved -> DANGER for this long
+
+# ---- speaker (Grove Speaker on D9, powered from USB 5V; loudest ~3000 Hz) ----
+BASE_FREQ = 3000
+MIC_TAIL = 0.6               # keep the microphone muted this long after any beep (echo)
+# Each pattern is a list of steps: ("tone", Hz, s), ("rest", s), ("slide", from_Hz, to_Hz, s)
+BEEPS = {
+    "CALL":     [("tone", 3000, 0.35), ("rest", 0.35), ("tone", 3000, 0.35), ("rest", 0.35),
+                 ("tone", 3000, 0.35)],                                   # 3 beeps: "knock 3x"
+    "PRESS_ME": [("tone", 3000, 0.9)],                                    # long: press the button
+    "AGAIN":    [("tone", 3300, 0.12), ("rest", 0.1), ("tone", 3300, 0.12)],   # quick double
+    "CONFIRM":  [("tone", 2300, 0.2), ("tone", 2800, 0.2), ("tone", 3300, 0.45)],  # rising chime
+    "MESSAGE":  [("tone", 3000, 0.6)],
+    "DANGER":   [("slide", 1500, 3800, 0.6), ("slide", 3800, 1500, 0.6)] * 3,  # wailing siren
+}
+# a lower-priority pattern never interrupts a higher one
+BEEP_PRIORITY = {"DANGER": 6, "CONFIRM": 5, "AGAIN": 4, "PRESS_ME": 3, "MESSAGE": 2, "CALL": 1}
 
 # ---- PRESS ME (main): Grove Red LED Button ----
 PIN_GROVE_BUTTON  = board.A3

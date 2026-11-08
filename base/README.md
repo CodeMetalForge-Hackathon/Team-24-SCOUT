@@ -51,23 +51,25 @@ should use, e.g. `http://192.168.1.20:8000`. On a Mac, click **Allow** if the fi
 Options: `--http-port 8000`, `--baud 115200`, `--db path.db`, `--one-node` (simulator with node 1 only).
 
 ### What the simulator does
-The fake nodes run the **real node logic** (`firmware/node/assess.py` and `co2logic.py`, DEMO
-profile), so statuses, CO2 levels and countdowns match the board exactly; only the raw sensor
-values are invented. Node 1 loops a ~6.5 min story (CO2 baseline learned in the first 30 s):
+The fake nodes run the **real node logic** (`firmware/node/assess.py`, `co2logic.py` and
+`caller.py`, DEMO profile), so statuses, calls, CO2 levels and countdowns match the board
+exactly; only the raw sensor values and the "survivor" are invented. Node 1 loops a ~6 min
+story through every rule (calls every ~32 s throughout; the CO2 baseline is learned in the first 30 s):
 
 | Time | What happens | Status |
 |---|---|---|
-| 6 s | hears a voice | POSSIBLE "heard voice" |
-| 25 s | **accidental single press** | LIKELY countdown → POSSIBLE "single press, not confirmed" |
-| 40–150 s | room CO2 drifts up (+2 ppm/s, people arriving) | only "CO2 high but steady (room air?)": **no status change** |
-| 175 s | breathing burst on the sensor | POSSIBLE "breathing detected …" at ~183 s, chart shaded, "evidence expires in N s" |
-| ~250 s | hold time over | "CO2 evidence expired" → NO SIGNS |
-| 270 + 285 s | breathing again + knocking | **LIKELY "breathing + knocking"** |
-| 345 / 353 s | press, press again | **CONFIRMED** → answers → pile shift → stuck button |
+| 36 s | breathing on the CO2 sensor | POSSIBLE "breathing detected …" |
+| 50 s | unprompted knock while breathing | **LIKELY "breathing + knocking"** |
+| ~110 s | CO2 evidence expires | NO SIGNS (calls keep going unanswered) |
+| 175 s | breathing again, several calls already missed | **UNRESPONSIVE "breathing but no answer to N calls"** (red, pulsing) |
+| ~218 s | knocks back during a call | **LIKELY "tapped back 2 times after call"** |
+| 290 s | unprompted knock | POSSIBLE "heard knocking" |
+| 305 / 312 s | press, press again | LIKELY countdown (calls paused) → **CONFIRMED** (calls stop) |
+| 330–345 s | danger alarm on/off | ⚠ DANGER banner, siren every 10 s |
 
-Node 2 stays NO SIGNS. The buttons work:
-**Call now** gets taps back after 3 s (node 2 stays silent and reports "no answer" after 10 s),
-**Ask** gets an answer after 3 s, and **Reset** clears the node and restarts its story.
+Node 2 stays NO SIGNS and never answers its calls. The buttons work: **Call now** starts a call
+as soon as the node allows it, **Danger alarm** switches the siren on/off, **Send** messages make
+the node beep, and **Reset** clears the node and restarts its story.
 
 Click **🔔 Enable alert sound** once: browsers only play sound after you've clicked on the page.
 CONFIRMED then plays three rising beeps.
@@ -117,25 +119,80 @@ Node → base (the receiver adds `rssi`). Lines that aren't valid are logged and
 
 | Line | Meaning |
 |---|---|
-| `{"t":"HB","n":1,"st":"POSSIBLE","why":"sudden CO2 rise +240 ppm in 10s","co2":1050,"base":810,"rh":49.5,"rh_base":48.1,"lvl":"SUDDEN_RISE","hold":42,"prof":"DEMO","dg":0,"rssi":-48}` | heartbeat, every 10 s (DEMO) / 30 s (FIELD); `hold` = seconds of CO2 evidence left |
+| `{"t":"HB","n":1,"st":"POSSIBLE","why":"sudden CO2 rise +240 ppm in 10s","co2":1050,"base":810,"rh":49.5,"rh_base":48.1,"lvl":"SUDDEN_RISE","hold":42,"prof":"DEMO","dg":0,"danger":false,"call_state":"LISTENING","listen_left":7,"next_call_in":0,"calls_unanswered":1,"mic":"on","rssi":-48}` | heartbeat, every 10 s (DEMO) / 30 s (FIELD); `hold` = seconds of CO2 evidence left |
 | `{"t":"EV","n":1,"e":"CO2","lvl":"BREATHING","prev":"NORMAL","rise":380,"secs":10,"rh_jump":6,"hold":60,"base":810}` | CO2 level changed: LEARNING / NORMAL / ELEVATED (info only) / SUDDEN_RISE / BREATHING / SLOW_BUILDUP (FIELD). See [docs/co2.md](../docs/co2.md) |
 | `{"t":"ST","n":1,"st":"LIKELY","why":"pressed once - press again (14s)"}` | status changed (countdown ticks at most every 5 s; the page counts down in between) |
 | `{"t":"EV","n":1,"e":"BTN","stage":"first"}` | PRESS ME pressed once: waiting for a 2nd press within 20 s |
 | `{"t":"EV","n":1,"e":"BTN","stage":"confirmed"}` | pressed twice: **survivor confirmed** (alert sound) |
 | `{"t":"EV","n":1,"e":"STUCK"}` | button held ≥ 5 s: probably debris, press ignored |
 | `{"t":"EV","n":1,"e":"TAP"}` / `{"t":"EV","n":1,"e":"VOICE"}` | mic heard knocking / a voice |
-| `{"t":"EV","n":1,"e":"TAP","taps":4}` | tapped back after a call (has a count) |
-| `{"t":"EV","n":1,"e":"NORESP","calls":2}` | call went unanswered |
-| `{"t":"EV","n":1,"e":"SHIFT"}` | pile movement (DANGER) |
+| `{"t":"EV","n":1,"e":"CALL"}` | node started a call (3 beeps), then listens 10 s |
+| `{"t":"EV","n":1,"e":"RESP","kind":"TAP","taps":3}` / `"kind":"VOICE"` | survivor answered the call |
+| `{"t":"EV","n":1,"e":"NORESP","calls":2}` | call went unanswered (2 in a row) |
+| `{"t":"EV","n":1,"e":"BEEP","p":"CONFIRM"}` | node played a beep pattern (logged, not on the timeline) |
+| `{"t":"EV","n":1,"e":"DANGER","on":true}` | danger alarm (siren) on / off |
 | `{"t":"EV","n":1,"e":"ANS","q":"injured","a":"yes"}` | survivor answered a question |
 
 Base → node (written to the receiver's serial port, one line each):
 `{"t":"CALL","n":1}`, `{"t":"MSG","n":1,"txt":"Help is coming. Stay still."}` (max 60 chars),
-`{"t":"ASK","n":1,"q":"injured"}` or `"q":"count"`, `{"t":"RESET","n":1}` (false alarm: node
-forgets all evidence). The node handles RESET and MSG today; CALL and ASK come later.
+`{"t":"DANGER","n":1,"on":true}`, `{"t":"RESET","n":1}` (false alarm: node forgets all
+evidence and counters). The node handles CALL, MSG, DANGER and RESET; `ASK` is for later.
 
 Statuses: `NO SIGNS`, `POSSIBLE`, `LIKELY`, `CONFIRMED`, `UNRESPONSIVE`. The dashboard shows
 `LOST` itself when it hasn't heard from a node for 90 s.
+
+## How the node talks to a survivor and decides
+
+### Beep language (Grove Speaker, loudest ~3000 Hz)
+
+| Pattern | Sound | Node screen | Meaning |
+|---|---|---|---|
+| CALL | 3 beeps (3000 Hz, 0.35 s on/off) | TAP 3 TIMES IF YOU HEAR THIS → TAP 3 TIMES NOW, LISTENING 7s | "Is anyone there?" Then it listens for 10 s |
+| PRESS_ME | one long beep (0.9 s) | WE HEAR YOU. PRESS THE RED BUTTON | the node heard an answer |
+| AGAIN | 2 quick high beeps | PRESS AGAIN TO CONFIRM (14s) | first press registered |
+| CONFIRM | rising 3-note chime | RESCUERS NOTIFIED. HELP IS COMING | pressed twice: survivor confirmed |
+| MESSAGE | one 0.6 s beep | the rescuer's text (15 s) | message from the base |
+| DANGER | wailing siren, every 10 s | !! DANGER !! CLEAR THE AREA | pile moving: rescuers get out |
+
+**Why the call is 3 beeps:** a survivor (or anyone) naturally answers a rhythm by copying it,
+so the node asks for 3 knocks. Debris settling or a single bang rarely produces 2–3 knocks
+inside the 10 s listening window, and the node accepts **2 knocks or any voice** as an answer
+(someone weak may not manage 3).
+
+**Microphone muting:** the sound sensor sits 10–20 cm from the speaker. While any pattern plays,
+and for 0.6 s after it (echo), sounds are ignored, and any sound already in progress is
+thrown away when the mic switches back on. So the node's own beeps can never count as knocks.
+The screen header shows **MIC OFF** while muted.
+
+**Call schedule:** a call every 20 s (DEMO) / 60 s (FIELD) after the previous one ends. Calls are
+paused during the first 10 s after power-on, during the press-again countdown and while the
+siren plays, and they stop once CONFIRMED. A button press during a call cancels it. Sounds heard
+while listening are *answers*; sounds outside listening are *unprompted* activity.
+
+### Decision table (`firmware/node/assess.py`, strongest first, first match wins)
+
+"CO2 evidence" = CO2 level SUDDEN_RISE, BREATHING or SLOW_BUILDUP (FIELD only). ELEVATED,
+NORMAL and LEARNING never change the status. CO2 alone can never make CONFIRMED.
+
+| # | Status | Rule | Reason shown |
+|---|---|---|---|
+| 1 | **CONFIRMED** | button pressed twice within 20 s (latched until Reset) | pressed button twice |
+| 2a | **LIKELY** | first press, waiting for the second | pressed once - press again (14s) |
+| 2b | LIKELY | answered a call within 60 s (DEMO) / 300 s (FIELD) | tapped back 3 times after call / answered by voice after call |
+| 2c | LIKELY | CO2 evidence + an unprompted knock/voice within 120 s | breathing + knocking / CO2 rise + voice |
+| 3 | **UNRESPONSIVE** | CO2 evidence + ≥ 2 calls in a row unanswered | breathing but no answer to N calls |
+| 4a | **POSSIBLE** | CO2 BREATHING | breathing detected: CO2 +X ppm, humidity +Y% |
+| 4b | POSSIBLE | CO2 SUDDEN_RISE | sudden CO2 rise +X ppm in Ys |
+| 4c | POSSIBLE | CO2 SLOW_BUILDUP (FIELD) | slow CO2 build-up +X ppm over N min |
+| 4d | POSSIBLE | unprompted knock/voice within 15 s (DEMO) | heard knocking / heard voice |
+| 4e | POSSIBLE | a single press that was never confirmed | single press, not confirmed |
+| 5 | NO SIGNS | nothing else | no evidence yet |
+
+- The unanswered-call counter goes back to 0 on any answer or button press. If the CO2 evidence
+  expires, UNRESPONSIVE falls back by itself, but the counter is kept.
+- **DANGER** (siren, from the dashboard or the tilt switch) is a separate flag shown on top of any
+  status; it never changes the status, and Reset doesn't clear it.
+- **Reset** clears all evidence and counters, not the sensors' baselines.
 
 ## API
 

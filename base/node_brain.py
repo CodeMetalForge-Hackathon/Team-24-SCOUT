@@ -23,3 +23,11 @@ def load_assess():
 
 def load_co2logic():
     return load_node_module("co2logic")
+
+
+def load_caller():
+    return load_node_module("caller")
+
+
+def load_beeper():
+    return load_node_module("beeper")      # no speaker on a laptop: runs silently

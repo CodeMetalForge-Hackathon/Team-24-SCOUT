@@ -58,6 +58,14 @@
   .danger span { display: block; background: var(--danger); color: #fff; font-weight: 900;
     font-size: 22px; text-align: center; padding: 10px; border-radius: 6px; }
   .card.has-danger .danger { display: block; animation: pulse 1s ease-in-out infinite; }
+  .callrow { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; background: var(--panel2);
+    border-radius: 10px; padding: 10px 12px; font-size: 17px; }
+  .callrow .cs { font-weight: 800; font-variant-numeric: tabular-nums; }
+  .callrow .cs.active { color: var(--blue); }
+  .callrow .un { font-weight: 700; } .callrow .un.bad { color: var(--s-unresp); }
+  .callrow .mic { color: var(--muted); }
+  .btn.danger-btn { border-color: #b33; color: #ffb3b3; background: transparent; }
+  .btn.danger-btn.on { background: var(--s-unresp); color: #fff; border-color: var(--s-unresp); }
 
   .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
   .stat { background: var(--panel2); border-radius: 10px; padding: 8px 10px; min-width: 0; }
@@ -177,7 +185,12 @@
       <span class="pill" data-r="pill"></span>
     </div>
     <div class="why" data-r="why"></div>
-    <div class="danger"><span>⚠ Pile movement: clear the area</span></div>
+    <div class="danger"><span>⚠ DANGER: pile movement, clear the area</span></div>
+    <div class="callrow">
+      <span class="cs" data-r="callstate">📣 –</span>
+      <span class="un" data-r="unanswered">Unanswered calls: 0</span>
+      <span class="mic" data-r="mic"></span>
+    </div>
     <div class="stats">
       <div class="stat"><div class="k">Last heard</div><div class="v" data-r="seen">–</div></div>
       <div class="stat"><div class="k">Signal</div><div class="v" data-r="rssi">–</div><div class="s" data-r="rssiQ"></div></div>
@@ -200,8 +213,7 @@
     </div>
     <div class="controls">
       <button class="btn primary" data-cmd="CALL">📣 Call now</button>
-      <button class="btn" data-cmd="ASK" data-q="injured">Ask: injured?</button>
-      <button class="btn" data-cmd="ASK" data-q="count">Ask: how many?</button>
+      <button class="btn danger-btn" data-r="danger">⚠ Danger alarm ON (test)</button>
     </div>
     <div class="controls">
       <button class="btn preset" data-cmd="MSG" data-txt="Help is coming. Stay still.">“Help is coming. Stay still.”</button>
@@ -222,6 +234,7 @@
 <script>
 "use strict";
 // CO2 (must match firmware/node/config.py profiles)
+const CALL_AUDIO = 2.4;   // 3 call beeps + mic tail before listening starts (firmware config)
 // Only a SUDDEN rise is evidence; ELEVATED (high but flat) is room air, info only.
 const CO2_EVIDENCE = ["SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP"];
 const LVL_TEXT = { LEARNING: "learning baseline", NORMAL: "normal", ELEVATED: "high, not rising",
@@ -269,6 +282,10 @@ function getCard(n) {
     const txt = r.txt.value.trim();
     if (!txt) { r.txt.classList.add("err"); feedback(r, "Type a message first.", "err"); r.txt.focus(); return; }
     send({ t: "MSG", n, txt }, r.form.querySelector("button"), r, () => { r.txt.value = ""; r.count.textContent = "0/60"; });
+  });
+  r.danger.addEventListener("click", () => {
+    const on = !(nodes.get(n) || {}).danger;
+    send({ t: "DANGER", n, on }, r.danger, r);
   });
   r.reset.addEventListener("click", () => {
     if (confirm(`Reset node ${n}? This clears its status and evidence (use for a false alarm).`)) {
@@ -326,6 +343,37 @@ function render(nd) {
     }
   }
   updateProfile();
+
+  // ---- call-and-listen cycle (exact from heartbeats, ticking locally in between) ----
+  const st = nd.last_status || nd.status;
+  let cs = "📣 –", active = false, calling = false;
+  if (lost) {
+    cs = "📣 –";
+  } else if (st === "CONFIRMED") {
+    cs = "📣 Calls stopped (confirmed)";
+  } else if (/^pressed once/.test(nd.why || "")) {
+    cs = "📣 Calls paused (waiting for 2nd press)";
+  } else if (nd.call_state === "CALLING" && nd.call_ts && now - nd.call_ts < CALL_AUDIO) {
+    cs = "📣 Calling…"; active = calling = true;
+  } else if ((nd.call_state === "CALLING" || nd.call_state === "LISTENING") && nd.listen_end) {
+    const left = Math.round(nd.listen_end - now);
+    cs = left > 0 ? `👂 Listening ${left} s…` : "👂 Listening…"; active = true;
+  } else if (nd.next_call_at) {
+    const left = Math.round(nd.next_call_at - now);
+    cs = left > 0 ? `📣 Next call in ${left} s` : "📣 Call due";
+  }
+  r.callstate.textContent = cs;
+  r.callstate.className = "cs" + (active ? " active" : "");
+  const un = nd.calls_unanswered || 0;
+  r.unanswered.textContent = `Unanswered calls: ${un}`;
+  r.unanswered.className = "un" + (un >= 2 ? " bad" : "");
+  // the node mutes its mic only for a few seconds while beeping: trust a "muted"
+  // heartbeat briefly, and estimate it during the call beeps
+  const mic = calling || (nd.mic === "muted" && now - nd.last_seen < 3) ? "muted" : nd.mic ? "on" : null;
+  r.mic.textContent = mic ? `🎙 mic ${mic}` : "";
+  r.danger.textContent = nd.danger ? "Turn danger alarm off" : "⚠ Danger alarm ON (test)";
+  r.danger.className = "btn danger-btn" + (nd.danger ? " on" : "");
+
   if (nd.lvl) {
     r.lvl.className = `lvl ${nd.lvl}`;
     r.lvl.textContent = LVL_TEXT[nd.lvl] || nd.lvl;
@@ -427,7 +475,9 @@ function addEvent(ev, isNew) {
     const st = /status is now (NO SIGNS|POSSIBLE|LIKELY|CONFIRMED|UNRESPONSIVE)/.exec(ev.desc);
     const heard = ev.e === "SOUND" || ev.e === "VOICE" || (ev.e === "TAP" && /knocking/.test(ev.desc));
     const co2 = ev.e === "CO2" ? LVL_DOT[ev.lvl] || "#a3afbc" : null;
-    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : heard ? "#ff8c1a" : co2 ? co2
+    const callDot = { CALL: "#4ea1ff", RESP: STATUS_COLOR.LIKELY, NORESP: "#a3afbc",
+      DANGER: "#ff3b3b" }[ev.e];
+    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : callDot ? callDot : heard ? "#ff8c1a" : co2 ? co2
       : ev.stage === "first" ? STATUS_COLOR.LIKELY : ev.stage === "confirmed" ? STATUS_COLOR.CONFIRMED
       : st ? STATUS_COLOR[st[1]] : "#a3afbc";
     if (ev.stage) li.classList.add(ev.stage);              // "first" (yellow) / "confirmed" (green)

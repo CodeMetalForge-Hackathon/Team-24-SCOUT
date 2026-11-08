@@ -4,14 +4,21 @@ import sys
 import supervisor  # type: ignore
 import config
 from ui import UI
-from assess import Assessor, CONFIRMED
+from assess import Assessor, CONFIRMED, CO2_EVIDENCE
 from sensors import Button, Vibration, SoundSensor, CO2Sensor
+from beeper import BeepPlayer
+from caller import Caller, CALLING, LISTENING
 
-arm_until = time.monotonic() + config.ARMING_SECS   # presses before this are ignored
+boot = time.monotonic()
+arm_until = boot + config.ARMING_SECS   # presses before this are ignored
 
-ui = UI(config.NODE_ID, config.PIN_SPEAKER)
-brain = Assessor(activity_window=config.ACTIVITY_WINDOW, confirm_window=config.CONFIRM_WINDOW,
-                 combine_window=config.COMBINE_WINDOW)
+ui = UI(config.NODE_ID)
+brain = Assessor(activity_window=config.ACTIVITY_WINDOW, response_window=config.RESPONSE_WINDOW,
+                 confirm_window=config.CONFIRM_WINDOW, combine_window=config.COMBINE_WINDOW)
+beeper = BeepPlayer(config.PIN_SPEAKER, config.BASE_FREQ, config.BEEPS, config.BEEP_PRIORITY,
+                    config.MIC_TAIL)
+caller = Caller(config.CALL_INTERVAL, config.LISTEN_SECS, config.RESPONSE_MIN_TAPS,
+                first_call_at=max(arm_until, boot + config.CALL_INTERVAL))
 
 # Both buttons feed the SAME logic: Grove LED button (main) + built-in D1 (backup)
 buttons = [
@@ -25,10 +32,13 @@ vibration = Vibration(config.PIN_VIBRATION) if config.ENABLE_VIBRATION else None
 
 sound = None
 if config.ENABLE_SOUND:
-    sound = SoundSensor(config.PIN_SOUND,
-                        config.SOUND_TAP_THRESHOLD, config.SOUND_VOICE_THRESHOLD,
-                        config.SOUND_WINDOW, config.TAP_MAX_WINDOWS,
-                        config.VOICE_MIN_WINDOWS)
+    try:
+        sound = SoundSensor(config.PIN_SOUND,
+                            config.SOUND_TAP_THRESHOLD, config.SOUND_VOICE_THRESHOLD,
+                            config.SOUND_WINDOW, config.TAP_MAX_WINDOWS,
+                            config.VOICE_MIN_WINDOWS)
+    except Exception as e:
+        print("Sound sensor not available (", e, ") - continuing without it")
 
 co2 = None
 if config.ENABLE_CO2:
@@ -39,6 +49,17 @@ if config.ENABLE_CO2:
         print("I2C not available (", e, ") - continuing without CO2")
     if co2 is not None and not co2.ok:
         co2 = None
+
+tilt = None
+if config.ENABLE_TILT:
+    try:
+        import digitalio  # type: ignore
+        tilt = digitalio.DigitalInOut(config.PIN_TILT)
+        tilt.direction = digitalio.Direction.INPUT
+        tilt.pull = digitalio.Pull.UP
+    except Exception as e:
+        print("Tilt switch not available (", e, ")")
+        tilt = None
 
 
 def signed(x):
@@ -66,10 +87,37 @@ def report(**msg):
     print(json.dumps(msg))
 
 
+def beep(name, now):
+    """Start a beep pattern; tell the base about the meaningful ones."""
+    if beeper.play(name, now) and name not in ("CALL", "DANGER"):
+        report(t="EV", e="BEEP", p=name)       # CALL / DANGER have their own events
+
+
+# ---------- screen prompts for the survivor ----------
+prompt_text = ""        # temporary prompt (e.g. "WE HEAR YOU...")
+prompt_until = 0
+message_text = ""       # rescuer message
+message_until = 0
+
+# ---------- DANGER (pile moving): command from the base or tilt switch ----------
+danger_cmd = False      # rescuer switched the alarm on
+tilt_until = 0          # tilt switch moved recently
+tilt_last = None
+next_siren = 0
+
+
+def set_danger_cmd(on, now):
+    global danger_cmd, next_siren
+    danger_cmd = on
+    next_siren = now                            # siren right away when switched on
+
+
 # ---------- commands from the base (USB serial now, LoRa later) ----------
 cmd_buf = ""
 
+
 def handle_command(line, now):
+    global message_text, message_until, prompt_until
     start = line.find("{")
     if start < 0:
         return                                   # someone typing in the console
@@ -83,12 +131,21 @@ def handle_command(line, now):
     t = cmd.get("t")
     if t == "RESET":
         print("COMMAND: reset by base (false alarm)")
-        brain.reset()                            # LED goes back to slow blink below
+        brain.reset()                            # LEDs go back to slow blink below
+        caller.reset(now)
+        prompt_until = 0
     elif t == "MSG":
-        txt = str(cmd.get("txt", ""))[:60]
-        print("COMMAND: message:", txt)
-        ui.set_message(txt, now)
-        ui.beep()
+        message_text = str(cmd.get("txt", ""))[:60]
+        message_until = now + config.MESSAGE_SECS
+        print("COMMAND: message:", message_text)
+        beep("MESSAGE", now)
+    elif t == "CALL":
+        print("COMMAND: call now")
+        caller.request()                         # starts as soon as it's allowed
+    elif t == "DANGER":
+        on = bool(cmd.get("on"))
+        print("COMMAND: danger alarm", "ON" if on else "off")
+        set_danger_cmd(on, now)
     else:
         print("COMMAND: not supported yet:", t)
 
@@ -110,18 +167,22 @@ def read_commands(now):
 
 
 print("Node", config.NODE_ID, "starting. Profile:", config.PROFILE,
-      "| presses ignored for", config.ARMING_SECS, "s")
+      "| presses ignored for", config.ARMING_SECS, "s | first call in",
+      int(caller.next_call - boot), "s")
 last_co2_level = None
 last_shown = None
 last_st = (None, None)
 last_st_time = -100
+last_danger = False
 next_hb = 0
 stuck_until = 0
+mic_was_muted = False
 loudest = 0          # loudest sound level since the last heartbeat (shown on dashboard)
 
 while True:
     now = time.monotonic()
     read_commands(now)
+    beeper.update(now)                           # advance the beep pattern (never blocks)
 
     # ---------- 1. SENSE ----------
     for b in buttons:
@@ -131,27 +192,46 @@ while True:
             report(t="EV", e="STUCK")
             stuck_until = now + 15
         elif ev == "PRESS":
-            stage = brain.button_press(now)
+            caller.cancel(now)                   # a press during a call: button logic takes over
+            stage = brain.button_press(now)      # also resets the unanswered-call counter
             print("EVENT: PRESS ME", stage)
             report(t="EV", e="BTN", stage=stage)
-            if stage == "first":
-                ui.beep()
-                ui.beep()
-            else:
-                ui.beep(dur=0.6)                 # long beep = confirmed
+            beep("AGAIN" if stage == "first" else "CONFIRM", now)
 
     if vibration and vibration.update(now):
         print("EVENT: vibration tap")
-        brain.activity(now)
+        brain.activity(now, "TAP")
 
+    # Microphone: muted while the speaker beeps (+ MIC_TAIL), so our own beeps
+    # never count as knocks. We still sample it to keep its state consistent.
+    muted = beeper.playing or now < beeper.quiet_until
     if sound:
+        if mic_was_muted and not muted:
+            sound.reset_run()                    # a sound that began during the beep doesn't count
         ev = sound.update(now)
-        if sound.level > loudest:
+        if muted:
+            ev = None
+        elif sound.level > loudest:
             loudest = sound.level
         if ev:
-            print("EVENT: sound", ev)
-            report(t="EV", e=ev)                 # "TAP" (knocking) or "VOICE"
-            brain.activity(now, ev)              # unprompted sound = weak evidence -> POSSIBLE
+            if caller.state == LISTENING:        # an answer to our call, not unprompted activity
+                print("EVENT: sound", ev, "while listening")
+                if caller.heard(ev, now) == "RESP":
+                    taps = caller.taps
+                    print("EVENT: call answered by", ev, "(taps:", taps, ")")
+                    resp = {"t": "EV", "e": "RESP", "kind": ev}
+                    if ev == "TAP":
+                        resp["taps"] = taps
+                    report(**resp)
+                    brain.call_response(now, ev, taps)
+                    beep("PRESS_ME", now)
+                    prompt_text = "WE HEAR YOU. PRESS THE RED BUTTON"
+                    prompt_until = now + config.PROMPT_SECS
+            else:
+                print("EVENT: sound", ev)
+                report(t="EV", e=ev)             # "TAP" (knocking) or "VOICE"
+                brain.activity(now, ev)          # unprompted sound = weak evidence -> POSSIBLE
+    mic_was_muted = muted
 
     if co2 and co2.update(now):                  # True only when a new reading (~every 5 s)
         base = " base %d" % co2.baseline if co2.baseline is not None else ""
@@ -160,7 +240,7 @@ while True:
         if co2.level != last_co2_level:          # tell the base only when the level changes
             print("EVENT: CO2", last_co2_level, "->", co2.level)
             ev = {"t": "EV", "e": "CO2", "lvl": co2.level, "prev": last_co2_level}
-            if co2.level in ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP"):
+            if co2.level in CO2_EVIDENCE:
                 ev["rise"] = int(co2.rise)
                 ev["secs"] = co2.rise_secs
                 ev["rh_jump"] = int(co2.rh_jump)
@@ -170,31 +250,86 @@ while True:
             report(**ev)
             last_co2_level = co2.level
 
+    if tilt is not None:
+        v = tilt.value
+        if tilt_last is not None and v != tilt_last:   # the switch moved: the pile shifted
+            print("EVENT: tilt switch moved")
+            if now >= tilt_until:
+                next_siren = now
+            tilt_until = now + config.TILT_HOLD
+        tilt_last = v
+
+    # ---------- DANGER: siren on top of everything, replayed every DANGER_REPEAT s ----------
+    danger = danger_cmd or now < tilt_until
+    if danger != last_danger:
+        brain.set_danger(danger)
+        report(t="EV", e="DANGER", on=danger)
+        print("EVENT: DANGER", "ON" if danger else "off")
+        if not danger and beeper.name == "DANGER":
+            beeper.stop(now)
+        last_danger = danger
+    if danger and now >= next_siren:
+        beeper.play("DANGER", now)
+        next_siren = now + config.DANGER_REPEAT
+
     # ---------- 2. DECIDE ----------
     status, reason = brain.evaluate(now)
     waiting = brain.awaiting_second(now)
 
+    # ---------- call-and-listen ----------
+    allowed = (now >= arm_until and status != CONFIRMED and not waiting
+               and beeper.name != "DANGER")
+    audio_done = beeper.name != "CALL" and now >= beeper.quiet_until
+    step = caller.update(now, allowed, audio_done)
+    if step == "CALL":
+        print("EVENT: calling (3 beeps)")
+        report(t="EV", e="CALL")
+        beep("CALL", now)
+    elif step == "LISTEN":
+        print("EVENT: listening for", config.LISTEN_SECS, "s")
+    elif step == "NORESP":
+        brain.no_response(now)
+        print("EVENT: no answer to call (%d in a row)" % brain.unanswered_calls)
+        report(t="EV", e="NORESP", calls=brain.unanswered_calls)
+    status, reason = brain.evaluate(now)         # again: the call step may have changed it
+
     # ---------- 3. SHOW (screen + LEDs) ----------
-    led_mode = "on" if status == CONFIRMED else "fast" if waiting else "blink"
+    listening = caller.state == LISTENING
+    led_mode = "on" if status == CONFIRMED else "fast" if (waiting or listening) else "blink"
     for b in buttons:
         b.set_led(now, led_mode)
 
-    if now < arm_until:
-        note = "ARMING %ds " % int(arm_until - now + 0.999)
-    elif now < stuck_until:
-        note = "STUCK? "
+    # what to tell the survivor, most important first
+    if danger:
+        prompt = "!! DANGER !! CLEAR THE AREA"
+    elif now < message_until:
+        prompt = message_text
+    elif status == CONFIRMED:
+        prompt = "RESCUERS NOTIFIED. HELP IS COMING"
+    elif waiting:
+        prompt = "PRESS AGAIN TO CONFIRM (%ds)" % int(brain.CONFIRM_WINDOW - (now - brain.first_press) + 0.999)
+    elif now < prompt_until:
+        prompt = prompt_text
+    elif caller.state == CALLING:
+        prompt = "TAP 3 TIMES IF YOU HEAR THIS"
+    elif listening:
+        prompt = "TAP 3 TIMES NOW LISTENING %ds" % int(caller.listen_left(now) + 0.999)
     else:
-        note = ""
+        prompt = ""
+
+    note = "MIC OFF " if (sound and muted) else ""
+    if now < arm_until:
+        note += "ARMING %ds " % int(arm_until - now + 0.999)
+    elif now < stuck_until:
+        note += "STUCK? "
     note += co2_note(now)
-    prompt = "PRESS AGAIN!" if waiting else ""
-    message = ui.message(now)
-    shown = (status, reason, brain.danger, prompt, note, message)
+    shown = (status, reason, danger, prompt, note)
     if shown != last_shown:
-        ui.show(status, reason, brain.danger, prompt, note, message)
+        ui.show(status, reason, danger, prompt, note)
         last_shown = shown
 
     # ---------- 4. REPORT to base ----------
-    # Status changes go out at once; reason-only changes (the countdown ticking)
+    # Status changes go out at once; reason-only changes (countdowns, CO2 numbers)
     # at most every ST_MIN_INTERVAL s, to save radio airtime.
     if status != last_st[0] or (reason != last_st[1]
                                 and now - last_st_time >= config.ST_MIN_INTERVAL):
@@ -204,10 +339,14 @@ while True:
         last_st_time = now
 
     if now >= next_hb:                           # "I'm alive" + latest readings
-        hb = {"t": "HB", "st": status, "why": reason, "dg": int(brain.danger)}
+        hb = {"t": "HB", "st": status, "why": reason, "dg": int(danger), "danger": danger,
+              "prof": config.PROFILE, "call_state": caller.state,
+              "listen_left": int(caller.listen_left(now)),
+              "next_call_in": int(caller.next_call_in(now)),
+              "calls_unanswered": brain.unanswered_calls,
+              "mic": "muted" if muted else "on"}
         if sound:
             hb["snd"] = loudest
-        hb["prof"] = config.PROFILE
         if co2 and co2.ppm is not None:
             hb["co2"] = co2.ppm
             hb["rh"] = round(co2.rh, 1)

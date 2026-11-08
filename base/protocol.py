@@ -7,13 +7,16 @@ so the parser NEVER raises: it returns (msg, None) or (None, "why it was rejecte
 import json
 
 STATUSES = ("NO SIGNS", "POSSIBLE", "LIKELY", "CONFIRMED", "UNRESPONSIVE")
-EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND", "CO2")
+EVENTS = ("BTN", "TAP", "VOICE", "STUCK", "NORESP", "SHIFT", "ANS", "SOUND", "CO2",
+          "CALL", "RESP", "BEEP", "DANGER")
 CO2_LEVELS = ("LEARNING", "NORMAL", "ELEVATED", "SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")
 CO2_EVIDENCE = ("SUDDEN_RISE", "BREATHING", "SLOW_BUILDUP")   # ELEVATED/NORMAL are info only
 PROFILES = ("DEMO", "FIELD")
 SOUND_KINDS = ("TAP", "VOICE")   # SOUND event (older nodes): knock vs. sustained voice
 BTN_STAGES = ("first", "confirmed")
 QUESTIONS = ("injured", "count")
+CALL_STATES = ("IDLE", "CALLING", "LISTENING")
+BEEPS = ("CALL", "PRESS_ME", "AGAIN", "CONFIRM", "MESSAGE", "DANGER")
 MSG_MAX = 60  # node screen fits ~60 characters
 
 # Optional numeric fields: name -> type. Bad values are dropped, not fatal.
@@ -23,9 +26,13 @@ _NUMERIC = {"co2": float, "base": float, "bat": float, "rssi": float,
             "rh": float, "rh_base": float,          # humidity % now / baseline
             "rise": float, "secs": int,             # CO2 event: sudden rise (ppm) in N seconds
             "rh_jump": float,                       # CO2 event: humidity jump (points)
-            "hold": int}                            # seconds of CO2 evidence left
+            "hold": int,                            # seconds of CO2 evidence left
+            "listen_left": int, "next_call_in": int, # call cycle (HB)
+            "calls_unanswered": int}
 # Optional text fields: name -> allowed values. Unknown values are dropped.
-_CHOICES = {"lvl": CO2_LEVELS, "prev": CO2_LEVELS, "prof": PROFILES}
+_CHOICES = {"lvl": CO2_LEVELS, "prev": CO2_LEVELS, "prof": PROFILES,
+            "kind": SOUND_KINDS, "p": BEEPS, "call_state": CALL_STATES, "mic": ("on", "muted")}
+_BOOLS = ("on", "danger")                           # true / false fields
 
 
 def _num(value, kind):
@@ -77,6 +84,9 @@ def parse_line(line):
     for key, allowed in _CHOICES.items():
         if raw.get(key) in allowed:
             msg[key] = raw[key]
+    for key in _BOOLS:
+        if isinstance(raw.get(key), bool):
+            msg[key] = raw[key]
 
     st = raw.get("st")
     if st is not None:
@@ -108,6 +118,10 @@ def parse_line(line):
             msg["stage"] = raw["stage"]
         elif e == "CO2" and "lvl" not in msg:
             return None, "CO2 event needs a known lvl"
+        elif e == "RESP" and "kind" not in msg:
+            return None, "RESP needs kind (TAP/VOICE)"
+        elif e == "DANGER" and "on" not in msg:
+            return None, "DANGER needs on (true/false)"
     return msg, None
 
 
@@ -168,7 +182,11 @@ def validate_command(cmd):
         return {"t": "ASK", "n": n, "q": q}
     if t == "RESET":
         return {"t": "RESET", "n": n}
-    raise ValueError("t must be CALL, MSG, ASK or RESET")
+    if t == "DANGER":
+        if not isinstance(cmd.get("on"), bool):
+            raise ValueError("danger needs on: true or false")
+        return {"t": "DANGER", "n": n, "on": cmd["on"]}
+    raise ValueError("t must be CALL, MSG, ASK, DANGER or RESET")
 
 
 def describe(msg, outgoing=False):
@@ -184,11 +202,15 @@ def describe(msg, outgoing=False):
                     "count": "Rescuer asked: how many people?"}.get(msg.get("q"), "Rescuer asked a question")
         if t == "RESET":
             return "Rescuer reset the node (false alarm)"
+        if t == "DANGER":
+            return "Rescuer turned the danger alarm " + ("ON (test)" if msg.get("on") else "off")
         return f"Rescuer sent {t}"
     if t == "HB":
         return f"heartbeat ({msg.get('st', '?')})"
     if t == "ST":
         why = msg.get("why")
+        if msg["st"] == "UNRESPONSIVE" and why:
+            return f"UNRESPONSIVE: {why[0].upper() + why[1:]}: possibly unconscious"
         return f"status is now {msg['st']}" + (f": {why}" if why else "")
     e = msg.get("e")
     if e == "BTN":
@@ -208,9 +230,21 @@ def describe(msg, outgoing=False):
     if e == "TAP":
         taps = msg.get("taps")
         return f"tapped back {taps} times after call" if taps else "tapped back after call"
+    if e == "CALL":
+        return "Node called: 'tap 3 times'"
+    if e == "RESP":
+        if msg["kind"] == "VOICE":
+            return "Survivor answered by voice"
+        return f"Survivor tapped back {msg.get('taps', '')} times after call".replace("  ", " ")
     if e == "NORESP":
         calls = msg.get("calls")
-        return f"no answer to call ({calls} unanswered)" if calls else "no answer to call"
+        return f"No answer to call ({calls} in a row)" if calls else "No answer to call"
+    if e == "BEEP":
+        return {"PRESS_ME": "Node beeped: 'press the red button'", "AGAIN": "Node beeped: 'press again'",
+                "CONFIRM": "Node played the confirm chime", "MESSAGE": "Node beeped for a message",
+                }.get(msg.get("p"), f"Node beeped ({msg.get('p')})")
+    if e == "DANGER":
+        return "Danger alarm ON" if msg["on"] else "Danger alarm off"
     if e == "SHIFT":
         return "PILE MOVEMENT detected: clear the area"
     if e == "ANS":

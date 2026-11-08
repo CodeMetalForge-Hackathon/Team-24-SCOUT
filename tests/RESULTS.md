@@ -28,14 +28,19 @@
 - D0 / D1 / D2 = survivor answer buttons (Yes / No / Count)
 - Screen = rescuer messages to survivor
 
-| 06 | Speaker | ✅ | 3-beep call + alarm audible at ~2 m inside box | Kiran | 3:15 PM |
+| 06 | Speaker | ✅ | Loudest ~3000 Hz on USB 5V; call / confirm / siren patterns | Kiran | 3:15 PM |
 
 ## 06 — Speaker
 **File:** `tests/06_speaker.py`
-**Wiring:** red → 3V (or USB if quiet), black → GND, yellow → D9
-**Results:** call tone 880 Hz, alarm 1500/1000 Hz; audible at __ m inside box; volume knob at __
-**Notes:** __
-**Use in final node:** call-and-listen beeps, "help is coming" signal, pile-shift alarm
+**Wiring:** Grove Speaker: red → **USB pin (5V)**, black → GND row, yellow (signal) → D9.
+`pwmio.PWMOut(board.D9, variable_frequency=True)`, 50 % duty (32768) = loudest.
+**Results**
+- Frequency sweep 1500–4000 Hz: **loudest around 3000 Hz** → `BASE_FREQ = 3000` in `config.py`.
+- Powered from the USB pin (5V). The volume knob on the Grove Speaker has no useful effect.
+- `audiopwmio` is not available on this board, so only beeps (no WAV files).
+- Beep patterns tested: CALL 3×0.35 s, AGAIN double beep at 3300 Hz, CONFIRM rising chime 2300→2800→3300 Hz, DANGER siren sliding 1500↔3800 Hz.
+**Notes:** the sound sensor (A0) sits 10–20 cm away and hears every beep → the node mutes the mic while beeping + 0.6 s (`MIC_TAIL`).
+**Use in final node:** call-and-listen, "we hear you / press the button", confirm chime, danger siren (see `base/README.md`, beep language).
 
 ## 03 — CO2 (SparkFun SEN-25200: SCD41 + SEN55)
 **File:** `tests/03_co2.py`
