@@ -13,14 +13,15 @@ This is a hackathon prototype, not a validated rescue or life-safety instrument.
 
 ## Prototype Features
 
-Area	Functionality
-CO₂ monitoring	Sensor support, time-based assessment logic, sudden-rise and hold-time rules, and DEMO/FIELD profiles
-Button interaction	Two-press confirmation, arming delay, and stuck-button protection
-Sound events	Separate thresholds and durations for knock and voice-like activity when compatible input hardware is attached
-Speaker output	Non-blocking beep patterns and speaker test routines with tone and siren effects
-Dashboard	Live node cards, CO₂ chart, command controls, and event timeline
-Base station	FastAPI service, serial and simulator inputs, SQLite logging, and WebSocket updates
-Protocol	Message parsing, command validation, and unit tests
+| Area | Functionality |
+|---|---|
+| CO₂ monitoring | Sensor readings, sudden-rise detection, hold-time rules, and DEMO/FIELD profiles |
+| Button interaction | Two-press confirmation, arming delay, and stuck-button protection |
+| Sound events | Separate thresholds and durations for knock and voice-like activity when a microphone or sound sensor is connected |
+| Speaker output | Non-blocking beep patterns, tone generation, and siren test effects |
+| Dashboard | Live node cards, CO₂ chart, command controls, and event timeline |
+| Base station | FastAPI service, serial and simulator inputs, SQLite logging, and WebSocket updates |
+| Protocol | Message parsing, command validation, and unit tests |
 
 ## Hardware
 
@@ -48,28 +49,6 @@ Exact sensor models, voltage requirements, and GPIO assignments must match the f
 5. Respond: an operator sends a supported command, such as triggering a beep or resetting node state.
 CO₂ concentration is reported in ppm. Interpretation depends on airflow, space size, sensor placement, and changes over time. DEMO settings are for demonstrating behavior; a FIELD profile name does not establish field validation.
 
-## Getting Started
-
-1. Clone the repository
-git clone https://github.com/CodeMetalForge-Hackathon/Team-24.git
-cd Team-24
-2. Choose a test path
-
-| Path | Purpose |
-|---|---|
-| Simulator | Exercise dashboard states and decision scenarios without connected nodes |
-| Hardware | Test actual sensors, firmware, communication, and return commands |
-
-
-Use the base-station setup documentation included with your checkout for the current Mac/Pi installation instructions, launch commands, protocol, and API. Configure the correct serial port for hardware mode.
-3. Validate components before integration
-- Confirm the ESP32 can be programmed and produces serial output.
-- Verify the CO₂ sensor produces valid readings after its specified startup period.
-- Test button behavior and speaker output independently.
-- If using audio input, test it independently from the speaker.
-- Verify message delivery between two compatible LoRa radios.
-- Connect the receiver to the base station and compare received readings with dashboard values.
-
 ## Demonstration Flow
 
 1. Start the base station and open the local dashboard.
@@ -87,8 +66,6 @@ LICENSE	Apache License 2.0
 
 
 ## Testing and Validation
-
-Development history includes protocol parsing and command-validation tests, sensor test resources, speaker tests, and a simulator designed to exercise decision rules. A commit records an implementation change; it does not by itself establish a passing test or successful hardware trial.
 
 For each physical test, record the hardware model, firmware configuration, environment, expected behavior, observed result, and limitations. Keep simulated results separate from physical measurements.
 Limitations and Future Work
