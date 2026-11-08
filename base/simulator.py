@@ -37,6 +37,8 @@ assess = load_assess()
 co2logic = load_co2logic()
 caller_mod = load_caller()
 
+SIM_BASE = {"lat": 42.36010, "lon": -71.05890}   # pretend command post (sim mode default)
+
 # = firmware/node/config.py, DEMO profile
 PROFILE = "DEMO"
 CONFIRM_WINDOW, ACTIVITY_WINDOW, RESPONSE_WINDOW, COMBINE_WINDOW = 20, 15, 60, 120
