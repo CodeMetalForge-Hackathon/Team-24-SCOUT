@@ -104,7 +104,8 @@ The intended Adafruit speaker was unavailable for this hackathon, so this featur
 
 Other future work includes validated relay operation, GPS/GNSS integration, ATAK integration, stronger audio-event assessment, battery/runtime testing, and deployment trials.
 
-<img width="3888" height="2438" alt="IMG_6800" src="https://github.com/user-attachments/assets/05d3b520-4946-4650-94ca-044a2385d55a" />
+<img width="3732" height="2322" alt="IMG_6803" src="https://github.com/user-attachments/assets/ab0b0ad2-e4eb-49af-8904-b675d0501214" />
+
 
 Built by Team 24 for the Code Metal Forge Hackathon 2026.
 License
