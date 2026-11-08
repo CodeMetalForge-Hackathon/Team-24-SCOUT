@@ -8,6 +8,7 @@ from assess import Assessor, CONFIRMED, CO2_EVIDENCE
 from sensors import Button, Vibration, SoundSensor, CO2Sensor, Battery
 from beeper import BeepPlayer
 from caller import Caller, CALLING, LISTENING
+from location import Location, GPSReader, header_tag
 
 boot = time.monotonic()
 arm_until = boot + config.ARMING_SECS   # presses before this are ignored
@@ -58,6 +59,18 @@ if config.ENABLE_CO2 and i2c is not None:
         co2 = None
 
 battery = Battery(i2c) if i2c is not None else None
+
+# ---------- location: GPS on the same I2C bus, last fix saved in flash ----------
+loc = Location(live_secs=config.GPS_LIVE_SECS)
+gps = GPSReader(i2c) if (config.ENABLE_GPS and i2c is not None) else None
+nvm = None
+try:
+    import microcontroller  # type: ignore
+    nvm = microcontroller.nvm
+    if loc.load_saved(nvm):
+        print("Last known location from flash:", loc.fix["lat"], loc.fix["lon"], "(age unknown)")
+except Exception as e:
+    print("No flash storage for location (", e, ")")
 
 tilt = None
 if config.ENABLE_TILT:
@@ -164,6 +177,15 @@ def handle_command(line, now):
         on = bool(cmd.get("on"))
         print("COMMAND: danger alarm", "ON" if on else "off")
         set_danger_cmd(on, now)
+    elif t == "SETLOC":
+        try:
+            lat, lon = float(cmd.get("lat")), float(cmd.get("lon"))
+        except (TypeError, ValueError):
+            print("COMMAND: bad SETLOC", cmd)
+            return
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            loc.set_manual(now, lat, lon, str(cmd.get("label", ""))[:20])
+            print("COMMAND: manual location", lat, lon, cmd.get("label", ""))
     else:
         print("COMMAND: not supported yet:", t)
 
@@ -185,7 +207,7 @@ def read_commands(now):
 
 
 # ---------- startup self-check: which parts answered? ----------
-sensors_ok = {"sound": sound is not None, "co2": co2 is not None, "gps": False,
+sensors_ok = {"sound": sound is not None, "co2": co2 is not None, "gps": bool(gps and gps.ok),
               "button": True, "speaker": beeper.pwm is not None}
 print("SELF-CHECK:", " ".join("%s=%s" % (k, "ok" if v else "MISSING") for k, v in sensors_ok.items()))
 report(t="EV", e="BOOT", sensors=sensors_ok)
@@ -199,6 +221,8 @@ last_st = (None, None)
 last_st_time = -100
 last_danger = False
 next_hb = 0
+next_loc = 0
+last_loc_src = None
 stuck_until = 0
 mic_was_ignored = False
 loudest = 0          # loudest sound level since the last heartbeat (shown on dashboard)
@@ -261,6 +285,16 @@ while True:
                 report(t="EV", e=ev)             # "TAP" (knocking) or "VOICE"
                 brain.activity(now, ev)          # unprompted sound = weak evidence -> POSSIBLE
     mic_was_ignored = ignore_mic
+
+    if gps:
+        gps.update(now, loc)                     # at most one NMEA sentence, 4x per second
+        if nvm is not None and loc.should_save(now):
+            try:
+                nvm[0:len(loc.to_saved())] = loc.to_saved()
+                loc.mark_saved(now)
+                print("Location saved to flash")
+            except Exception as e:
+                print("Saving location failed (", e, ")")
 
     if co2 and co2.update(now):                  # True only when a new reading (~every 5 s)
         base = " base %d" % co2.baseline if co2.baseline is not None else ""
@@ -346,12 +380,13 @@ while True:
     else:
         prompt = ""
 
+    where = loc.best(now)
     note = "MIC OFF " if (sound and muted) else ""
     if now < arm_until:
         note += "ARMING %ds " % int(arm_until - now + 0.999)
     elif now < stuck_until:
         note += "STUCK? "
-    note += co2_note(now)
+    note += header_tag(where) + " " + co2_note(now)
     shown = (status, reason, danger, prompt, note)
     if shown != last_shown:
         ui.show(status, reason, danger, prompt, note)
@@ -366,6 +401,22 @@ while True:
         report(t="ST", st=status, why=reason, ev=brain.evidence(now))
         last_st = (status, reason)
         last_st_time = now
+
+    # location in its own small message: every LOC_INTERVAL s and when the source changes
+    if now >= next_loc or where["src"] != last_loc_src:
+        msg = {"t": "LOC", "src": where["src"]}
+        if where["src"] != "NONE":
+            msg["lat"] = round(where["lat"], 5)          # 5 decimals = ~1 m
+            msg["lon"] = round(where["lon"], 5)
+            msg["age"] = where["age"]
+            for k in ("acc", "sats", "label"):
+                if where.get(k) is not None and where.get(k) != "":
+                    msg[k] = where[k]
+        report(**msg)
+        if where["src"] != last_loc_src:
+            print("LOCATION:", header_tag(where))
+        last_loc_src = where["src"]
+        next_loc = now + config.LOC_INTERVAL
 
     if battery:
         battery.update(now)
