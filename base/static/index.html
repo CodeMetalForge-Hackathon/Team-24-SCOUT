@@ -30,6 +30,9 @@
   button, input, textarea, select { font: inherit; color: inherit; }
   [hidden] { display: none !important; }
   .muted { color: var(--muted); }
+  .ic { width: 1.1em; height: 1.1em; vertical-align: -0.18em; flex: none; fill: none; stroke: currentColor;
+    stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .btn .ic, .chip .ic { margin-right: 2px; }
   .num { font-variant-numeric: tabular-nums; }
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
@@ -57,8 +60,6 @@
   .badge { font-weight: 800; font-size: 13px; letter-spacing: .04em; padding: 4px 8px; border-radius: 6px;
     border: 1px solid var(--line); white-space: nowrap; }
   .badge.offline { background: var(--blue); color: #fff; border-color: var(--blue); }
-  .summary { font-weight: 650; }
-  .summary b { color: var(--unresp); }
   .spacer { flex: 1; }
   .link { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 14px; }
   .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--none); flex: none; }
@@ -96,6 +97,8 @@
   .s-NO-SIGNS { background: var(--none); color: var(--on-none); }
   .s-LOST { background: var(--lost); color: var(--on-lost); border: 2px dashed var(--muted); }
   .s-RESTARTING { background: var(--panel2); color: var(--text); border: 2px dashed var(--none); }
+  .s-PAUSED { background: var(--panel2); color: var(--text); border: 2px solid var(--blue); }
+  #pausedBadge { background: var(--blue); color: #fff; border-color: var(--blue); cursor: pointer; }
   dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px;
     padding: 18px; width: min(560px, 94vw); }
   dialog::backdrop { background: rgba(0, 0, 0, .55); }
@@ -149,17 +152,20 @@
     border-left: 6px solid var(--none); font-weight: 650; }
   .guidance.danger { border-left-color: var(--danger); }
   .reason { font-size: 18px; margin: 6px 0; }
-  ul.ev { list-style: none; padding: 0; margin: 0; }
-  ul.ev li { padding: 5px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 8px; }
-  ul.ev li .mk { width: 20px; flex: none; text-align: center; }
-  ul.ev li.on { font-weight: 750; }
+  ul.ev { list-style: none; padding: 0; margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  ul.ev li { display: grid; grid-template-columns: 26px 1fr; align-items: center; min-height: 34px;
+    padding: 4px 10px 4px 6px; border-top: 1px solid var(--line); line-height: 1.25; }
+  ul.ev li:first-child { border-top: none; }
+  ul.ev li .mk { display: flex; justify-content: center; color: var(--muted); }
+  ul.ev li.on { font-weight: 750; background: var(--panel); }
+  ul.ev li.on .mk { color: var(--ok); }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .kv { background: var(--panel); border-radius: 8px; padding: 8px 10px; }
   .kv .k { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .kv .v { font-size: 18px; font-weight: 750; }
   canvas { width: 100%; display: block; }
-  #co2chart { height: 160px; background: var(--panel); border-radius: 8px; }
+  #co2chart, #sndchart { height: 160px; background: var(--panel); border-radius: 8px; }
   .comms { max-height: 180px; overflow-y: auto; font-size: 15px; }
   .comms div { padding: 4px 0; border-bottom: 1px solid var(--line); }
   .comms .out { color: var(--blue); }
@@ -196,22 +202,51 @@
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-check-circle" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="currentColor"/></symbol>
+  <symbol id="i-half" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></symbol>
+  <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
+  <symbol id="i-small" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="m6 3 14 9-14 9z"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></symbol>
+  <symbol id="i-call" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/></symbol>
+  <symbol id="i-sound-off" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="m23 9-6 6M17 9l6 6"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></symbol>
+  <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8M2 2l20 20"/></symbol>
+  <symbol id="i-listen" viewBox="0 0 24 24"><path d="M3 12h2l3-7 4 14 3-7h6"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+  <symbol id="i-danger" viewBox="0 0 24 24"><path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86z"/><path d="M12 8v4M12 16h.01"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+</svg>
 <header class="topbar">
   <button id="incident" title="Click to rename the incident">Incident</button>
   <span class="badge offline" title="No internet needed: data comes over LoRa / USB only">OFFLINE</span>
   <span id="profile" class="badge" hidden></span>
-  <span id="summary" class="summary"></span>
+  <button id="pausedBadge" class="badge btn small" hidden title="All nodes are paused for a demo. Click to resume.">
+    <svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg> PAUSED · resume</button>
   <button id="alertCount" class="badge btn small" title="Unacknowledged alerts">0 alerts</button>
   <span class="spacer"></span>
   <span class="link" title="Data link to the nodes"><span id="linkDot" class="dot"></span><span id="linkText">–</span></span>
   <span class="link" id="wsBox" title="Live connection between this page and the base station"><span id="wsDot" class="dot"></span><span id="wsText" hidden></span></span>
-  <button id="operator" class="btn small" title="Your name, recorded when you acknowledge alerts">👤 set name</button>
-  <button id="sound" class="btn small" title="Alert sound on/off">🔇</button>
-  <button id="theme" class="btn small" title="Day / night mode">◐</button>
+  <button id="operator" class="btn small" title="Your name, recorded when you acknowledge alerts"><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg> set name</button>
+  <button id="sound" class="btn small" title="Alert sound on/off"><svg class="ic" aria-hidden="true"><use href="#i-sound-off"/></svg></button>
+  <button id="theme" class="btn small" title="Day / night mode"><svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg></button>
   <span id="clock" class="num">--:--:--</span>
-  <button id="menuBtn" class="btn small" title="Menu" aria-haspopup="true">☰</button>
+  <button id="menuBtn" class="btn small" title="Menu" aria-haspopup="true"><svg class="ic" aria-hidden="true"><use href="#i-menu"/></svg></button>
 </header>
 <div id="menu" hidden>
+  <button class="btn small" id="mPause">Pause all nodes (demo)</button>
   <button class="btn small" id="mNewIncident">New incident… (reset all nodes)</button>
 </div>
 <div id="toast" role="status" hidden></div>
@@ -232,7 +267,7 @@
         <table id="triage">
           <thead><tr>
             <th>Status</th><th>Node</th><th>Why</th><th class="hide-sm">Location</th>
-            <th>Heard</th><th class="hide-md">Battery</th><th class="hide-sm">Team</th><th>Alert</th>
+            <th>Heard</th><th class="hide-md">Battery</th><th>Alert</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -243,8 +278,8 @@
         <div class="d-head">
           <h2 id="dTitle">Node</h2>
           <span id="dChip" class="chip big"></span>
-          <span id="dDanger" class="chip danger" hidden>⛔ DANGER</span>
-          <button id="dAck" class="btn primary" hidden>✓ Acknowledge alert</button>
+          <span id="dDanger" class="chip danger" hidden><svg class="ic" aria-hidden="true"><use href="#i-danger"/></svg> DANGER</span>
+          <button id="dAck" class="btn primary" hidden><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg> Acknowledge alert</button>
         </div>
         <div id="dGuide" class="guidance"></div>
         <div id="dDangerGuide" class="guidance danger" hidden></div>
@@ -265,6 +300,12 @@
         </div>
         <canvas id="co2chart"></canvas>
         <div class="muted" style="font-size:13px">last 10 min · dashed = baseline · shaded = sudden rise</div>
+
+        <h3>Sound</h3>
+        <div class="row" style="margin-bottom:6px"><span id="dSnd" class="num"></span></div>
+        <canvas id="sndchart"></canvas>
+        <div class="muted" style="font-size:13px">loudness, last 10 min (the sensor measures how loud, not pitch) ·
+          line = loudest every 10 s · dotted = knock threshold · dashed = voice threshold · shaded = room level · K / V = knock / voice heard</div>
 
         <h3>Location</h3>
         <div class="row"><span id="dLocSrc" class="loc NONE">NONE</span><span id="dLocAge" class="muted"></span></div>
@@ -289,7 +330,7 @@
 
         <h3>Survivor comms</h3>
         <div class="row">
-          <button class="btn primary" data-cmd="CALL">📣 Call now</button>
+          <button class="btn primary" data-cmd="CALL"><svg class="ic" aria-hidden="true"><use href="#i-call"/></svg> Call now</button>
           <button class="btn" data-msg="Help is coming. Stay still.">“Help is coming. Stay still.”</button>
           <button class="btn" data-msg="Tap 3 times if you can hear us.">“Tap 3 times if you can hear us.”</button>
         </div>
@@ -300,20 +341,10 @@
         <div id="msgErr" class="err-text"></div>
         <div id="dComms" class="comms"></div>
 
-        <h3>Team</h3>
-        <div class="form">
-          <div class="row"><input id="fTeam" type="text" maxlength="30" placeholder="Assign team e.g. Team Alpha" style="flex:1">
-            <button id="bTeam" class="btn">Assign</button></div>
-          <div class="row"><input id="fTag" type="text" maxlength="30" placeholder="Site tag e.g. Sector B, east wall" style="flex:1">
-            <button id="bTag" class="btn">Save tag</button></div>
-          <textarea id="fNotes" maxlength="500" placeholder="Notes for the team"></textarea>
-          <div class="row"><button id="bNotes" class="btn">Save notes</button><span id="metaMsg" class="ok-text"></span></div>
-        </div>
-
         <h3>Node controls</h3>
         <div class="row">
-          <button id="bDanger" class="btn warn">⛔ Danger alarm ON (test)</button>
-          <button id="bReset" class="btn">↺ Reset node…</button>
+          <button id="bDanger" class="btn warn"><svg class="ic" aria-hidden="true"><use href="#i-danger"/></svg> Danger alarm ON (test)</button>
+          <button id="bReset" class="btn"><svg class="ic" aria-hidden="true"><use href="#i-reset"/></svg> Reset node…</button>
         </div>
         <div id="ctlMsg" class="err-text"></div>
       </aside>
@@ -350,8 +381,8 @@
       <button class="btn small" data-filter="sensors" aria-pressed="false">Sensors</button>
       <button class="btn small" data-filter="system" aria-pressed="false">System</button>
       <span class="spacer"></span>
-      <button id="expCsv" class="btn small">⬇ Export CSV</button>
-      <button id="expJson" class="btn small">⬇ Export JSON</button>
+      <button id="expCsv" class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg> Export CSV</button>
+      <button id="expJson" class="btn small"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg> Export JSON</button>
     </div>
     <table id="log"><thead><tr><th>Time</th><th>Node</th><th>Type</th><th>What happened</th></tr></thead><tbody></tbody></table>
   </section>
@@ -367,13 +398,11 @@
   </div>
   <div class="opt danger">
     <h3>Full reset (this node)</h3>
-    <p>The node restarts (arming, CO₂ baseline re-learned). Its dashboard history (timeline, chart,
-      alerts, messages, manual location) is <b>archived</b> to <code>base/archive/</code>, then cleared.</p>
+    <p>Restarts the node: it starts from scratch at NO SIGNS (10 s start-up, CO₂ re-learns the room).
+      This node's history on the dashboard (timeline, charts, alerts, messages, manual location) is
+      saved to a file in <b>base/archive</b> first, then cleared from the screen.</p>
     <div class="checks">
       <label><input type="checkbox" id="rdKeepGps" checked> Keep the GPS last known fix</label>
-      <label><input type="checkbox" id="rdKeepTeam"> Keep the team assignment</label>
-      <label><input type="checkbox" id="rdKeepNotes"> Keep the notes</label>
-      <label><input type="checkbox" id="rdKeepTag"> Keep the site tag</label>
     </div>
     <div class="row" style="margin-top:8px">
       <input id="rdConfirm" type="text" placeholder="Type RESET to confirm" autocomplete="off" style="max-width:220px">
@@ -387,8 +416,7 @@
 <dialog id="incidentDlg">
   <h2>New incident</h2>
   <div class="opt danger">
-    <p>Every node restarts. The whole dashboard (timeline, alerts, acknowledgements, teams, notes,
-      tags, charts) is <b>archived</b> to <code>base/archive/</code>, then cleared. The base location is kept.</p>
+    <p>Every node restarts. The whole dashboard (timeline, alerts, acknowledgements, charts) is <b>archived</b> to <code>base/archive/</code>, then cleared. The base location is kept.</p>
     <input id="niName" type="text" maxlength="60" placeholder="New incident name">
     <div class="checks" style="margin-top:6px"><label><input type="checkbox" id="niKeepGps" checked> Keep the nodes' GPS last known fixes</label></div>
     <div class="row" style="margin-top:8px">
@@ -403,8 +431,9 @@
 <script>
 "use strict";
 // ======================= constants =======================
-const ORDER = ["UNRESPONSIVE", "CONFIRMED", "LIKELY", "POSSIBLE", "NO SIGNS", "RESTARTING", "LOST"];   // triage order
-const ICON = { UNRESPONSIVE: "⚠", CONFIRMED: "✔", LIKELY: "●", POSSIBLE: "◐", "NO SIGNS": "○", RESTARTING: "↻", LOST: "✕" };
+const ORDER = ["UNRESPONSIVE", "CONFIRMED", "LIKELY", "POSSIBLE", "NO SIGNS", "PAUSED", "RESTARTING", "LOST"];   // triage order
+const ICON = { UNRESPONSIVE: "alert", CONFIRMED: "check-circle", LIKELY: "dot", POSSIBLE: "half", "NO SIGNS": "circle",
+  PAUSED: "pause", RESTARTING: "refresh", LOST: "x-circle" };   // icon names (sprite above)
 const BOOT_WAIT = 30;              // seconds to wait for the node's BOOT after a full reset
 const GUIDE = {
   UNRESPONSIVE: "Breathing detected but no answer to calls: possible unconscious survivor. HIGH PRIORITY.",
@@ -414,6 +443,7 @@ const GUIDE = {
   "NO SIGNS": "No evidence yet.",
   LOST: "Node silent: check battery or radio.",
   RESTARTING: "Full reset sent: waiting for the node to restart.",
+  PAUSED: "Paused for a demo: the node is not sensing, calling or reporting. Resume from the menu.",
   DANGER: "Pile movement / danger alarm: clear the area.",
 };
 const LOST_AFTER = 90;
@@ -437,6 +467,7 @@ let filter = "all";
 let view = "triage";
 
 const $ = (id) => document.getElementById(id);
+const ic = (name) => `<svg class="ic" aria-hidden="true"><use href="#i-${name}"/></svg>`;   // line icon
 const now = () => Date.now() / 1000 + serverOffset;
 const pad = (x) => String(x).padStart(2, "0");
 const hms = (ts) => { const d = new Date((ts - serverOffset) * 1000); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
@@ -480,13 +511,12 @@ const fmtDist = (m) => m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(2
 // ======================= top bar =======================
 function renderTop() {
   const list = [...nodes.values()];
-  const attention = list.filter((nd) => ["UNRESPONSIVE", "CONFIRMED", "LIKELY", "LOST"].includes(statusOf(nd)) || nd.danger).length;
-  $("summary").innerHTML = `${list.length} node${list.length === 1 ? "" : "s"} · ` +
-    (attention ? `<b>${attention} need${attention === 1 ? "s" : ""} attention</b>` : "none need attention");
   const un = alerts.filter((a) => !a.acked_at).length;
-  $("alertCount").textContent = `🔔 ${un} unacknowledged`;
+  $("alertCount").innerHTML = `${ic("bell")} ${un} unacknowledged`;
   $("alertCount").className = "badge btn small" + (un ? " hot" : "");
   $("incident").textContent = meta.incident || "Unnamed incident";
+  $("pausedBadge").hidden = !meta.paused;
+  $("mPause").innerHTML = meta.paused ? `${ic("play")} Resume all nodes` : `${ic("pause")} Pause all nodes (demo)`;
   const profs = [...new Set(list.map((nd) => nd.prof).filter(Boolean))];
   $("profile").hidden = !profs.length;
   $("profile").textContent = profs.join(" / ") + " profile";
@@ -502,9 +532,9 @@ function renderBanner() {
   const b = $("banner");
   b.hidden = !open.length;
   b.innerHTML = open.slice(0, 4).map((a) => `<div class="alert ${a.kind}">
-      <span>${a.kind === "CONFIRMED" ? "✔" : a.kind === "DANGER" ? "⛔" : "⚠"} ${esc(a.text)}</span>
+      <span>${ic(a.kind === "CONFIRMED" ? "check-circle" : a.kind === "DANGER" ? "danger" : "alert")} ${esc(a.text)}</span>
       <span class="when">${hms(a.ts)} · ${ago(now() - a.ts)}</span>
-      <button class="btn small" data-ack="${a.id}">✓ Acknowledge</button></div>`).join("") +
+      <button class="btn small" data-ack="${a.id}">${ic("check")} Acknowledge</button></div>`).join("") +
     (open.length > 4 ? `<div class="muted">+ ${open.length - 4} more unacknowledged alerts (see Triage)</div>` : "");
 }
 
@@ -528,16 +558,15 @@ function renderTriage() {
   tb.innerHTML = list.map((nd) => {
     const st = statusOf(nd), m = nodeMeta[nd.n] || {};
     const un = unackedFor(nd.n), ack = lastAckFor(nd.n);
-    const alertCell = un.length ? `<span class="unacked">⚠ ${un.length} unacked</span>`
-      : ack ? `<span class="acked">✓ ${esc(ack.acked_by)} ${hms(ack.acked_at).slice(0, 5)}</span>` : `<span class="muted">–</span>`;
+    const alertCell = un.length ? `<span class="unacked">${ic("alert")} ${un.length} unacked</span>`
+      : ack ? `<span class="acked">${ic("check")} ${esc(ack.acked_by)} ${hms(ack.acked_at).slice(0, 5)}</span>` : `<span class="muted">–</span>`;
     return `<tr data-n="${nd.n}" tabindex="0" class="s-row-${cls(st)}${nd.n === selected ? " sel" : ""}" title="${esc(GUIDE[st])}">
-      <td><span class="chip s-${cls(st)}">${ICON[st]} ${st}</span>${nd.danger && st !== "LOST" ? ` <span class="chip danger">⛔ DANGER</span>` : ""}</td>
+      <td><span class="chip s-${cls(st)}">${ic(ICON[st])} ${st}</span>${nd.danger && st !== "LOST" ? ` <span class="chip danger">${ic("danger")} DANGER</span>` : ""}</td>
       <td><span class="nodeid">N${nd.n}</span>${m.tag ? `<span class="tag">${esc(m.tag)}</span>` : ""}</td>
-      <td class="why">${esc(st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `silent for ${ago(now() - nd.last_seen).replace(" ago", "")} · was ${nd.last_status}` : nd.why)}</td>
+      <td class="why">${esc(nd.paused ? "paused (demo)" : st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `silent for ${ago(now() - nd.last_seen).replace(" ago", "")} · was ${nd.last_status}` : nd.why)}</td>
       <td class="hide-sm">${locBadge(nd)}</td>
       <td class="num">${ago(now() - nd.last_seen)}</td>
       <td class="hide-md num">${nd.bat != null ? Math.round(nd.bat) + "%" : "–"}</td>
-      <td class="hide-sm">${m.team ? esc(m.team) : `<span class="muted">unassigned</span>`}</td>
       <td>${alertCell}</td></tr>`;
   }).join("");
   if (selected == null && list.length) select(list[0].n);
@@ -547,15 +576,14 @@ function renderTriage() {
 function select(n) {
   selected = n;
   const m = nodeMeta[n] || {};
-  $("fTeam").value = m.team || ""; $("fTag").value = m.tag || ""; $("fNotes").value = m.notes || "";
-  for (const id of ["msgErr", "metaMsg", "ctlMsg", "fLocMsg", "dCopyMsg"]) $(id).textContent = "";
+  for (const id of ["msgErr", "ctlMsg", "fLocMsg", "dCopyMsg"]) $(id).textContent = "";
   $("detail").hidden = false;
   renderTriage(); renderDetail();
 }
 
 function evidenceLines(nd) {
   const ev = nd.ev || {}, st = statusOf(nd), out = [];
-  const add = (on, text) => out.push(`<li class="${on ? "on" : ""}"><span class="mk">${on ? "✓" : "·"}</span><span>${text}</span></li>`);
+  const add = (on, text) => out.push(`<li class="${on ? "on" : ""}"><span class="mk">${ic(on ? "check" : "small")}</span><span>${text}</span></li>`);
   const btn = ev.btn || "none";
   add(btn !== "none", btn === "confirmed" ? "Button pressed twice: survivor confirmed" :
     btn === "first" ? "Button pressed once: waiting for the 2nd press" : "Button not pressed");
@@ -564,27 +592,25 @@ function evidenceLines(nd) {
   const co2 = ev.co2 || nd.lvl || "NONE";
   add(CO2_EVIDENCE.includes(co2), `CO₂: ${CO2_TEXT[co2] || co2}`);
   add(!!ev.resp, ev.resp ? "Answered a call recently" : "No recent answer to calls");
-  const miss = ev.miss ?? nd.calls_unanswered ?? 0;
-  // missed calls only count (towards UNRESPONSIVE) together with CO2 evidence
-  add(miss >= 2 && CO2_EVIDENCE.includes(co2), `Missed calls in a row: ${miss}` + (miss >= 2 && !CO2_EVIDENCE.includes(co2) ? " (no CO₂ sign, so not UNRESPONSIVE)" : ""));
-  add(!!nd.danger, nd.danger ? "Danger alarm ON (does not change the status)" : "No danger alarm");
-  if (st === "LOST") out.unshift(`<li class="on"><span class="mk">✕</span><span>No message for ${ago(now() - nd.last_seen).replace(" ago", "")}: node may be off or out of range</span></li>`);
+  if (st === "LOST") out.unshift(`<li class="on"><span class="mk">${ic("x")}</span><span>No message for ${ago(now() - nd.last_seen).replace(" ago", "")}: node may be off or out of range</span></li>`);
   if (!nd.ev) out.push(`<li><span class="mk"></span><span class="muted">(this node doesn't send an evidence snapshot)</span></li>`);
   return out.join("");
 }
 
 function callText(nd) {
   const st = statusOf(nd), t = now();
-  if (st === "LOST") return "📣 –";
-  if (st === "CONFIRMED") return "📣 Calls stopped (confirmed)";
-  if ((nd.ev && nd.ev.btn === "first") || /^pressed once/.test(nd.why || "")) return "📣 Calls paused (waiting for 2nd press)";
-  if (nd.call_state === "CALLING" && nd.call_ts && t - nd.call_ts < CALL_AUDIO) return "📣 Calling…";
+  const c = (text) => `${ic("call")} ${text}`;
+  if (st === "LOST" || st === "RESTARTING") return c("–");
+  if (nd.paused) return `${ic("pause")} Paused (demo): no calls`;
+  if (st === "CONFIRMED") return c("Calls stopped (confirmed)");
+  if ((nd.ev && nd.ev.btn === "first") || /^pressed once/.test(nd.why || "")) return c("Calls paused (waiting for 2nd press)");
+  if (nd.call_state === "CALLING" && nd.call_ts && t - nd.call_ts < CALL_AUDIO) return c("Calling…");
   if ((nd.call_state === "CALLING" || nd.call_state === "LISTENING") && nd.listen_end) {
     const left = Math.round(nd.listen_end - t);
-    return left > 0 ? `👂 Listening ${left} s…` : "👂 Listening…";
+    return `${ic("listen")} ` + (left > 0 ? `Listening ${left} s…` : "Listening…");
   }
-  if (nd.next_call_at) { const left = Math.round(nd.next_call_at - t); return left > 0 ? `📣 Next call in ${left} s` : "📣 Call due"; }
-  return "📣 –";
+  if (nd.next_call_at) { const left = Math.round(nd.next_call_at - t); return c(left > 0 ? `Next call in ${left} s` : "Call due"); }
+  return c("–");
 }
 
 function renderDetail() {
@@ -593,24 +619,24 @@ function renderDetail() {
   const st = statusOf(nd), m = nodeMeta[nd.n] || {}, t = now();
   $("dTitle").textContent = `Node ${nd.n}` + (m.tag ? ` · ${m.tag}` : "");
   $("dChip").className = `chip big s-${cls(st)}`;
-  $("dChip").textContent = `${ICON[st]} ${st}`;
+  $("dChip").innerHTML = `${ic(ICON[st])} ${st}`;
   $("dDanger").hidden = !nd.danger;
   $("dGuide").textContent = GUIDE[st];
-  $("dGuide").style.borderLeftColor = `var(--${{ UNRESPONSIVE: "unresp", CONFIRMED: "confirmed", LIKELY: "likely", POSSIBLE: "possible", "NO SIGNS": "none", RESTARTING: "none", LOST: "lost" }[st]})`;
+  $("dGuide").style.borderLeftColor = `var(--${{ UNRESPONSIVE: "unresp", CONFIRMED: "confirmed", LIKELY: "likely", POSSIBLE: "possible", "NO SIGNS": "none", PAUSED: "blue", RESTARTING: "none", LOST: "lost" }[st]})`;
   $("dDangerGuide").hidden = !nd.danger;
-  $("dDangerGuide").textContent = "⛔ " + GUIDE.DANGER;
+  $("dDangerGuide").innerHTML = ic("danger") + " " + esc(GUIDE.DANGER);
   // a node's reason may contain a countdown that the node only sends every 5 s: tick it here
   let why = nd.why || "";
   const cd = /\((\d+)s\)$/.exec(why);
   if (cd && nd.why_ts) why = why.replace(/\(\d+s\)$/, `(${Math.max(0, cd[1] - Math.floor(t - nd.why_ts))}s)`);
-  $("dReason").textContent = st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `Last status: ${nd.last_status}: ${why}` : why;
+  $("dReason").textContent = nd.paused ? "Paused (demo): not sensing, calling or reporting until resumed" : st === "RESTARTING" ? restartText(nd) : st === "LOST" ? `Last status: ${nd.last_status}: ${why}` : why;
   $("dSince").textContent = `${st === "LOST" ? "Last heard" : "Status since"} ${hms(st === "LOST" ? nd.last_seen : nd.status_since)}` +
     ` · heard ${ago(t - nd.last_seen)}` + (nd.bat != null ? ` · battery ${Math.round(nd.bat)}%` : "");
   $("dAck").hidden = !unackedFor(nd.n).length;
   $("dEv").innerHTML = evidenceLines(nd);
-  $("dCall").textContent = callText(nd) + `  ·  unanswered: ${nd.calls_unanswered || 0}`;
+  $("dCall").innerHTML = callText(nd) + `  ·  unanswered: ${nd.calls_unanswered || 0}`;
   const micMuted = (nd.call_state === "CALLING" && nd.call_ts && t - nd.call_ts < CALL_AUDIO) || (nd.mic === "muted" && t - nd.last_seen < 3);
-  $("dMic").textContent = nd.mic || micMuted ? `🎙 mic ${micMuted ? "muted" : "on"}` : "";
+  $("dMic").innerHTML = nd.mic || micMuted ? `${ic(micMuted ? "mic-off" : "mic")} mic ${micMuted ? "muted" : "on"}` : "";
   const missing = nd.parts ? Object.entries(nd.parts).filter(([, ok]) => !ok).map(([k]) => k) : [];
   $("dParts").textContent = nd.parts ? (missing.length ? `missing: ${missing.join(", ")}` : "all parts OK") : "";
 
@@ -620,6 +646,10 @@ function renderDetail() {
   const hold = nd.hold_until && st !== "LOST" ? Math.round(nd.hold_until - t) : 0;
   $("dHold").textContent = hold > 0 ? `· evidence expires in ${hold} s` : "";
   drawCo2($("co2chart"), nd);
+  const ls = nd.last_sound, sh = nd.snd_hist || [], lastS = sh[sh.length - 1];
+  $("dSnd").textContent = (ls ? `Last sound: ${ls.k === "TAP" ? "knocking" : "voice"} ${ago(t - ls.ts)}` : "No sounds heard yet") +
+    (lastS && lastS[2] != null ? ` · room level ${lastS[2]} · voice above ${lastS[3]} · knock above ${lastS[4]}` : "");
+  drawSound($("sndchart"), nd);
 
   // location
   const l = locNow(nd);
@@ -642,7 +672,7 @@ function renderDetail() {
   $("dComms").innerHTML = comm.length ? comm.map((e) => `<div class="${e.out ? "out" : ""}"><span class="muted num">${hms(e.ts)}</span> ${esc(e.desc)}</div>`).join("")
     : `<div class="muted">No calls or messages yet.</div>`;
 
-  $("bDanger").textContent = nd.danger ? "Turn danger alarm off" : "⛔ Danger alarm ON (test)";
+  $("bDanger").innerHTML = nd.danger ? "Turn danger alarm off" : `${ic("danger")} Danger alarm ON (test)`;
   $("bDanger").className = "btn warn" + (nd.danger ? " on" : "");
 }
 
@@ -682,8 +712,42 @@ function drawCo2(cv, nd) {
   pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); g.stroke();
 }
 
+function drawSound(cv, nd) {
+  if (!cv.clientWidth) return;
+  const { g, w, h } = fitCanvas(cv);
+  const t = now(), span = 600, left = 52, right = w - 8, top = 14, bottom = h - 20;
+  const muted = cssVar("--muted"), line = cssVar("--line");
+  const pts = (nd.snd_hist || []).filter((p) => t - p[0] <= span);
+  g.font = "12px system-ui, sans-serif"; g.fillStyle = muted;
+  g.textAlign = "left"; g.fillText("10 min ago", left, h - 4); g.textAlign = "right"; g.fillText("now", right, h - 4);
+  if (!pts.length) { g.textAlign = "center"; g.fillText("no sound data (no sound sensor, or not reported yet)", (left + right) / 2, h / 2); return; }
+  const hi = Math.min(66000, Math.max(...pts.map((p) => Math.max(p[1], p[4] || 0))) * 1.08);
+  const X = (x) => left + (right - left) * (1 - (t - x) / span), Y = (v) => bottom - (bottom - top) * v / hi;
+  // room level (noise floor) as a shaded band at the bottom
+  g.fillStyle = muted + "33"; g.beginPath(); g.moveTo(X(pts[0][0]), bottom);
+  pts.forEach((p) => g.lineTo(X(p[0]), Y(p[2] || 0))); g.lineTo(X(pts[pts.length - 1][0]), bottom); g.closePath(); g.fill();
+  g.strokeStyle = line; g.lineWidth = 1; g.fillStyle = muted; g.textAlign = "right"; g.textBaseline = "middle";
+  for (const v of [0, hi / 2, hi]) { g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke(); g.fillText(Math.round(v / 1000) + "k", left - 6, Y(v)); }
+  g.textBaseline = "alphabetic";
+  const last = pts[pts.length - 1];
+  const hline = (v, dash, col) => { if (v == null) return; g.setLineDash(dash); g.strokeStyle = col; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(left, Y(v)); g.lineTo(right, Y(v)); g.stroke(); g.setLineDash([]); };
+  hline(last[3], [6, 5], cssVar("--possible"));          // voice threshold
+  hline(last[4], [2, 4], cssVar("--unresp"));            // knock threshold
+  g.strokeStyle = cssVar("--blue"); g.lineWidth = 2.2; g.lineJoin = "round"; g.beginPath();
+  pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); g.stroke();
+  // K / V markers where the node reported a knock or a voice
+  g.font = "bold 12px system-ui, sans-serif"; g.textAlign = "center";
+  for (const [ts, k] of nd.snd_marks || []) {
+    if (t - ts > span) continue;
+    const x = X(ts), col = cssVar(k === "TAP" ? "--unresp" : "--possible");
+    g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.moveTo(x, top + 10); g.lineTo(x, bottom); g.stroke();
+    g.fillStyle = col; g.fillText(k === "TAP" ? "K" : "V", x, top + 6);
+  }
+}
+
 // ======================= situation radar =======================
-const STATUS_VAR = { UNRESPONSIVE: "--unresp", CONFIRMED: "--confirmed", LIKELY: "--likely", POSSIBLE: "--possible", "NO SIGNS": "--none", RESTARTING: "--none", LOST: "--lost" };
+const STATUS_VAR = { UNRESPONSIVE: "--unresp", CONFIRMED: "--confirmed", LIKELY: "--likely", POSSIBLE: "--possible", "NO SIGNS": "--none", PAUSED: "--blue", RESTARTING: "--none", LOST: "--lost" };
 function renderRadar() {
   const cv = $("radar");
   if (view !== "situation" || !cv.clientWidth) return;
@@ -722,10 +786,10 @@ function renderRadar() {
     g.fillStyle = col; g.beginPath(); g.arc(x, y, 11, 0, Math.PI * 2); g.fill();
     g.strokeStyle = text; g.lineWidth = p.nd.n === selected ? 3 : 1; g.stroke(); g.lineWidth = 1;
     g.fillStyle = text; g.font = "bold 14px system-ui, sans-serif"; g.textAlign = "left";
-    g.fillText(`N${p.nd.n} ${ICON[st]} ${st}${p.nd.danger ? " ⛔" : ""}`, x + 15, y + 5);
+    g.fillText(`N${p.nd.n} ${st}${p.nd.danger ? " · DANGER" : ""}`, x + 15, y + 5);
   }
-  $("placed").innerHTML = placed.length ? placed.map((p) => `<div><b>N${p.nd.n}</b> ${ICON[statusOf(p.nd)]} ${statusOf(p.nd)} · ${fmtDist(p.d)} ${COMPASS[Math.round(p.b / 45) % 8]} · <span class="loc ${p.l.src}">${p.l.src}</span></div>`).join("") : "–";
-  $("unplaced").innerHTML = unplaced.length ? unplaced.map((p) => `<div><b>N${p.nd.n}</b> ${ICON[statusOf(p.nd)]} ${statusOf(p.nd)} · ${p.l ? "base location not set" : "no GPS fix / no manual location"}</div>`).join("") : "–";
+  $("placed").innerHTML = placed.length ? placed.map((p) => `<div><b>N${p.nd.n}</b> ${ic(ICON[statusOf(p.nd)])} ${statusOf(p.nd)} · ${fmtDist(p.d)} ${COMPASS[Math.round(p.b / 45) % 8]} · <span class="loc ${p.l.src}">${p.l.src}</span></div>`).join("") : "–";
+  $("unplaced").innerHTML = unplaced.length ? unplaced.map((p) => `<div><b>N${p.nd.n}</b> ${ic(ICON[statusOf(p.nd)])} ${statusOf(p.nd)} · ${p.l ? "base location not set" : "no GPS fix / no manual location"}</div>`).join("") : "–";
 }
 
 // ======================= event log =======================
@@ -779,7 +843,7 @@ function alertSound() {
   if (open.some((a) => a.kind !== "CONFIRMED")) tone([1200, 800, 1200, 800]);   // urgent two-tone
   else tone([880, 1100, 1320]);                                                  // rising: good news
 }
-function renderSound() { $("sound").textContent = soundOn ? "🔊" : "🔇"; $("sound").title = soundOn ? "Alert sound ON (click to mute)" : "Alert sound OFF (click to enable)"; }
+function renderSound() { $("sound").innerHTML = ic(soundOn ? "call" : "sound-off"); $("sound").title = soundOn ? "Alert sound ON (click to mute)" : "Alert sound OFF (click to enable)"; }
 
 // ======================= talking to the server =======================
 function operator() {
@@ -787,14 +851,18 @@ function operator() {
   if (!name) { name = (prompt("Your name (recorded with acknowledgements):", "") || "").trim().slice(0, 30); if (name) { store("operator", name); renderOperator(); } }
   return name || "Operator";
 }
-function renderOperator() { const n = load("operator"); $("operator").textContent = n ? `👤 ${n}` : "👤 set name"; }
+function renderOperator() {          // just the icon until a name is set (keeps the top bar on one line)
+  const n = load("operator");
+  $("operator").innerHTML = n ? `${ic("user")} ${esc(n)}` : ic("user");
+  $("operator").title = n ? `You are ${n} (click to change)` : "Set your name (recorded when you acknowledge alerts)";
+}
 async function post(url, body, msgEl, okText) {
   try {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
-    if (res.ok && data.ok !== false) { if (msgEl) { msgEl.className = "ok-text"; msgEl.textContent = okText || "✓ done"; } return true; }
-    if (msgEl) { msgEl.className = "err-text"; msgEl.textContent = "✗ " + (data.error || `failed (${res.status})`); }
-  } catch (e) { if (msgEl) { msgEl.className = "err-text"; msgEl.textContent = "✗ base station unreachable"; } }
+    if (res.ok && data.ok !== false) { if (msgEl) { msgEl.className = "ok-text"; msgEl.textContent = okText || "done"; } return true; }
+    if (msgEl) { msgEl.className = "err-text"; msgEl.textContent = "Error: " + (data.error || `failed (${res.status})`); }
+  } catch (e) { if (msgEl) { msgEl.className = "err-text"; msgEl.textContent = "Base station unreachable"; } }
   return false;
 }
 const cmd = (c, msgEl, okText) => post("/api/cmd", c, msgEl, okText);
@@ -874,23 +942,20 @@ $("incident").addEventListener("click", () => {
 });
 $("operator").addEventListener("click", () => { store("operator", ""); operator(); renderOperator(); });
 $("sound").addEventListener("click", () => { soundOn = !soundOn; store("sound", soundOn ? "on" : "off"); ensureAudio(); renderSound(); if (soundOn) tone([880]); });
-function setTheme(t) { document.documentElement.dataset.theme = t; store("theme", t); $("theme").textContent = t === "dark" ? "☀" : "☾"; $("theme").title = t === "dark" ? "Switch to day mode" : "Switch to night mode"; renderAll(); }
+function setTheme(t) { document.documentElement.dataset.theme = t; store("theme", t); $("theme").innerHTML = ic(t === "dark" ? "sun" : "moon"); $("theme").title = t === "dark" ? "Switch to day mode" : "Switch to night mode"; renderAll(); }
 $("theme").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
 
 // detail panel actions (always for the selected node)
 $("dAck").addEventListener("click", () => post("/api/ack", { n: selected, by: operator() }));
-document.querySelectorAll("#detail [data-cmd]").forEach((b) => b.addEventListener("click", () => cmd({ t: b.dataset.cmd, n: selected }, $("msgErr"), "✓ call requested")));
-document.querySelectorAll("#detail [data-msg]").forEach((b) => b.addEventListener("click", () => cmd({ t: "MSG", n: selected, txt: b.dataset.msg }, $("msgErr"), "✓ message sent")));
+document.querySelectorAll("#detail [data-cmd]").forEach((b) => b.addEventListener("click", () => cmd({ t: b.dataset.cmd, n: selected }, $("msgErr"), "call requested")));
+document.querySelectorAll("#detail [data-msg]").forEach((b) => b.addEventListener("click", () => cmd({ t: "MSG", n: selected, txt: b.dataset.msg }, $("msgErr"), "message sent")));
 $("msgTxt").addEventListener("input", () => { $("msgCount").textContent = `${$("msgTxt").value.length}/60`; $("msgTxt").classList.remove("err"); $("msgErr").textContent = ""; });
 $("fMsg").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const txt = $("msgTxt").value.trim();
   if (!txt) { $("msgTxt").classList.add("err"); $("msgErr").className = "err-text"; $("msgErr").textContent = "Type a message first."; $("msgTxt").focus(); return; }
-  if (await cmd({ t: "MSG", n: selected, txt }, $("msgErr"), "✓ message sent")) { $("msgTxt").value = ""; $("msgCount").textContent = "0/60"; }
+  if (await cmd({ t: "MSG", n: selected, txt }, $("msgErr"), "message sent")) { $("msgTxt").value = ""; $("msgCount").textContent = "0/60"; }
 });
-$("bTeam").addEventListener("click", () => post("/api/node_meta", { n: selected, team: $("fTeam").value, by: operator() }, $("metaMsg"), "✓ team assigned"));
-$("bTag").addEventListener("click", () => post("/api/node_meta", { n: selected, tag: $("fTag").value, by: operator() }, $("metaMsg"), "✓ tag saved"));
-$("bNotes").addEventListener("click", () => post("/api/node_meta", { n: selected, notes: $("fNotes").value, by: operator() }, $("metaMsg"), "✓ notes saved"));
 $("bDanger").addEventListener("click", () => { const nd = nodes.get(selected); cmd({ t: "DANGER", n: selected, on: !(nd && nd.danger) }, $("ctlMsg"), ""); });
 // ---------- reset dialogs: "Clear status", "Full reset", "New incident" ----------
 function toast(text) {
@@ -907,23 +972,29 @@ $("bReset").addEventListener("click", () => {
   $("rdTitle").textContent = `Reset node ${selected}`;
   for (const id of ["rdClearMsg", "rdFullMsg"]) $(id).textContent = "";
   $("rdConfirm").value = ""; $("rdFull").disabled = true;
-  $("rdKeepGps").checked = true; $("rdKeepTeam").checked = $("rdKeepNotes").checked = $("rdKeepTag").checked = false;
+  $("rdKeepGps").checked = true;
   $("resetDlg").showModal();
 });
 $("rdClose").addEventListener("click", () => $("resetDlg").close());
 $("rdClear").addEventListener("click", async () => {
   if (!confirm(`Clear the status of node ${selected}? It goes back to NO SIGNS; history is kept.`)) return;
-  if (await cmd({ t: "RESET", n: selected }, $("rdClearMsg"), "✓ cleared")) { $("resetDlg").close(); toast(`Node ${selected}: status cleared`); }
+  if (await cmd({ t: "RESET", n: selected }, $("rdClearMsg"), "cleared")) { $("resetDlg").close(); toast(`Node ${selected}: status cleared`); }
 });
 $("rdConfirm").addEventListener("input", () => typedReset($("rdConfirm"), $("rdFull"), $("rdFullMsg")));
 $("rdFull").addEventListener("click", async () => {
   $("rdFull").disabled = true;
-  const keep = { gps: $("rdKeepGps").checked, team: $("rdKeepTeam").checked, notes: $("rdKeepNotes").checked, tag: $("rdKeepTag").checked };
-  if (await post("/api/reset", { n: selected, keep, confirm: $("rdConfirm").value.trim(), by: operator() }, $("rdFullMsg"), "✓ done")) $("resetDlg").close();
+  const keep = { gps: $("rdKeepGps").checked };
+  if (await post("/api/reset", { n: selected, keep, confirm: $("rdConfirm").value.trim(), by: operator() }, $("rdFullMsg"), "done")) $("resetDlg").close();
   else $("rdFull").disabled = false;
 });
 $("menuBtn").addEventListener("click", (ev) => { ev.stopPropagation(); $("menu").hidden = !$("menu").hidden; });
 document.addEventListener("click", (ev) => { if (!ev.target.closest("#menu")) $("menu").hidden = true; });
+async function setPaused(on) {
+  $("menu").hidden = true;
+  if (await post("/api/pause", { on, by: operator() })) toast(on ? "All nodes paused for the demo" : "All nodes resumed");
+}
+$("mPause").addEventListener("click", () => setPaused(!meta.paused));
+$("pausedBadge").addEventListener("click", () => setPaused(false));
 $("mNewIncident").addEventListener("click", () => {
   $("menu").hidden = true;
   $("niName").value = ""; $("niConfirm").value = ""; $("niGo").disabled = true; $("niMsg").textContent = ""; $("niKeepGps").checked = true;
@@ -934,13 +1005,13 @@ $("niConfirm").addEventListener("input", () => typedReset($("niConfirm"), $("niG
 $("niGo").addEventListener("click", async () => {
   if (!$("niName").value.trim()) { $("niMsg").className = "err-text"; $("niMsg").textContent = "Give the new incident a name."; $("niName").focus(); return; }
   $("niGo").disabled = true;
-  if (await post("/api/new_incident", { name: $("niName").value, keep_gps: $("niKeepGps").checked, confirm: $("niConfirm").value.trim(), by: operator() }, $("niMsg"), "✓ done")) {
+  if (await post("/api/new_incident", { name: $("niName").value, keep_gps: $("niKeepGps").checked, confirm: $("niConfirm").value.trim(), by: operator() }, $("niMsg"), "done")) {
     $("incidentDlg").close(); selected = null;
   } else $("niGo").disabled = false;
 });
 $("dCopy").addEventListener("click", async () => {
   const txt = $("dLatLon").textContent;
-  try { await navigator.clipboard.writeText(txt); $("dCopyMsg").textContent = "✓ copied"; }
+  try { await navigator.clipboard.writeText(txt); $("dCopyMsg").textContent = "copied"; }
   catch (e) { prompt("Copy this position:", txt); }
 });
 function readLatLon(latEl, lonEl, msgEl) {
@@ -953,12 +1024,12 @@ function readLatLon(latEl, lonEl, msgEl) {
 $("fLoc").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const p = readLatLon($("fLat"), $("fLon"), $("fLocMsg"));
-  if (p) cmd({ t: "SETLOC", n: selected, ...p, label: $("fLabel").value }, $("fLocMsg"), "✓ sent: the node will report it as MANUAL");
+  if (p) cmd({ t: "SETLOC", n: selected, ...p, label: $("fLabel").value }, $("fLocMsg"), "sent: the node will report it as MANUAL");
 });
 $("fBase").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const p = readLatLon($("bLat"), $("bLon"), $("bMsg"));
-  if (p) post("/api/meta", { base: p, by: operator() }, $("bMsg"), "✓ saved");
+  if (p) post("/api/meta", { base: p, by: operator() }, $("bMsg"), "saved");
 });
 window.addEventListener("resize", renderAll);
 

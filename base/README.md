@@ -214,7 +214,7 @@ NORMAL and LEARNING never change the status. CO2 alone can never make CONFIRMED.
 ## Using the dashboard as a team
 
 Open `http://<base-station>:8000` on every laptop/tablet at the command post. Everything is shared:
-an acknowledgement, a team assignment or a note made on one screen appears on all of them.
+an acknowledgement, a reset or a pause made on one screen appears on all of them.
 
 1. **Set up once:** click the incident name to rename it; on **Situation**, enter the base
    (command post) location so the radar can place nodes; click **👤** to enter your name
@@ -237,7 +237,7 @@ an acknowledgement, a team assignment or a note made on one screen appears on al
 4. **Click a node** for the detail panel. It shows why the node chose its status (evidence), the
    call cycle, the CO₂ chart and location (copy lat/lon, distance and bearing from base), and lets
    you talk to the survivor (Call now, preset or typed messages: the survivor sees them on the
-   node's screen). Use **Assign** to give the node to a team, and add a site tag and notes.
+   node's screen).
 5. **Situation** is an offline "radar": base in the centre, range rings, north up, nodes coloured
    by status at their best known position. Nodes without a position are listed beside it.
 6. **Event log**: everything that happened, filterable (Alerts / Survivor comms / Sensors /
@@ -245,7 +245,30 @@ an acknowledgement, a team assignment or a note made on one screen appears on al
 7. **Reset node** only for a confirmed false alarm: it clears the node's evidence and counters.
    **Danger alarm (test)** sounds the node's siren.
 
-Use the ☀/☾ button to switch between day and night mode.
+Use the sun / moon button to switch between day and night mode.
+
+**Pause all nodes (demo):** top-bar menu → *Pause all nodes*. Every node stops sensing, calling, beeping and
+reporting (screen: PAUSED (DEMO), LEDs off) and only sends "I'm paused" every 30 s, so it isn't marked LOST.
+Pausing clears every node's evidence: all nodes show **NO SIGNS** (marked "paused (demo)") and, after you resume
+(blue *PAUSED · resume* badge or the menu), they stay at NO SIGNS until something new and real happens.
+
+**Sound chart** (detail panel): the Grove sound sensor measures *loudness*, not pitch. The chart shows the loudest
+sound every 10 s, the room's learned quiet level (shaded), the voice threshold (dashed) and the knock threshold
+(dotted), with K / V markers where the node heard a knock / voice.
+
+### Resetting a node
+
+| Level | Where | What the node does | What the dashboard clears | Kept |
+|---|---|---|---|---|
+| **Clear status** (`RESET`) | detail panel → Reset node… | forgets evidence and counters, stops beeping, NO SIGNS "status cleared by base" | nothing | everything, incl. history |
+| **Full reset** (`REBOOT`) | detail panel → Reset node… (type RESET) | restarts: arming, CO₂ baseline re-learned, BOOT | that node's timeline, charts, alerts + acks, messages, manual location | GPS last fix if ticked (default on); one audit line |
+| **New incident** | top-bar menu → New incident… (type RESET) | every node restarts | everything (all nodes, alerts, charts) | base location; one audit line |
+
+Before anything is deleted it is **archived** to `base/archive/<incident>_<node1|all>_<date-time>.json` and `.csv`
+(not committed to git). The live log keeps one audit line, e.g. *"Node 1 fully reset by Ana at 00:12
+(archived: …)"*. After a full reset the node shows RESTARTING until it reports again (its BOOT, or, if the base
+missed that while the USB port was re-opening, its next status or heartbeat); readings sent just before the restart are
+ignored. After 30 s without anything: *"Reset sent, node not responding: check power"*.
 
 ## API
 
@@ -255,7 +278,10 @@ Use the ☀/☾ button to switch between day and night mode.
 | `GET /api/events?n=1&limit=200` | logged messages from SQLite, newest first, with plain-English `desc` and `cat` (`include_bad=true` to see rejected lines; up to 20000 for export) |
 | `POST /api/ack` | `{"id":12,"by":"Ana"}` or `{"n":2,"by":"Ana"}` (all of a node's alerts) |
 | `POST /api/meta` | `{"incident":"…","base":{"lat":…,"lon":…},"by":"…"}` |
-| `POST /api/node_meta` | `{"n":2,"team":"Team Alpha","tag":"Sector B","notes":"…","by":"…"}` |
+| `POST /api/node_meta` | `{"n":2,"team":"…","tag":"…","notes":"…","by":"…"}` (kept in the API; no longer shown on the dashboard) |
+| `POST /api/pause` | `{"on":true,"by":"Ana"}` pauses every node for a demo, `{"on":false}` resumes |
+| `POST /api/reset` | full reset of one node: `{"n":1,"keep":{"gps":true},"confirm":"RESET","by":"Ana"}` |
+| `POST /api/new_incident` | `{"name":"…","keep_gps":true,"confirm":"RESET","by":"Ana"}` |
 | `POST /api/cmd` | body `{"t":"CALL","n":1}` etc. → `400` if invalid, `503` if the receiver isn't connected |
 | `WS /ws` | full state on connect (nodes, timeline, alerts, incident settings, team notes), then a push for every change |
 

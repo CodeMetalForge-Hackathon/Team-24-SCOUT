@@ -118,3 +118,23 @@ class LocationState(unittest.TestCase):
         self.assertIsNotNone(apply(s, '{"t":"LOC","n":2,"src":"LAST","lat":42.36,"lon":-71.05,"age":12}', 61))
         nd = s.snapshot(62)[2]
         self.assertEqual((nd["loc"]["src"], nd["loc"]["age"], nd["loc_ts"]), ("LAST", 12, 61))
+
+
+class PauseAndSound(unittest.TestCase):
+    def test_pause_flag_from_event_and_heartbeat(self):
+        s = State()
+        self.assertIsNotNone(apply(s, '{"t":"EV","n":1,"e":"PAUSE","on":true}', 1))
+        self.assertTrue(s.snapshot(2)[1]["paused"])
+        apply(s, '{"t":"HB","n":1,"st":"NO SIGNS","paused":1}', 30)
+        self.assertTrue(s.snapshot(31)[1]["paused"])
+        apply(s, '{"t":"HB","n":1,"st":"NO SIGNS","cs":"IDLE"}', 60)           # normal HB = resumed
+        self.assertFalse(s.snapshot(61)[1]["paused"])
+
+    def test_sound_history_and_markers(self):
+        s = State()
+        apply(s, '{"t":"SN","n":1,"snd":15600,"nf":12900,"vt":16900,"tt":22000}', 10)
+        apply(s, '{"t":"EV","n":1,"e":"TAP"}', 12)
+        apply(s, '{"t":"EV","n":1,"e":"RESP","kind":"VOICE"}', 14)
+        nd = s.snapshot(15)[1]
+        self.assertEqual(nd["snd_hist"], [[10, 15600, 12900, 16900, 22000]])
+        self.assertEqual(nd["snd_marks"], [[12, "TAP"], [14, "VOICE"]])

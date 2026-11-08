@@ -55,6 +55,14 @@ class CO2Levels:
         self._fast = 0                 # readings in a row with a fast rise
         self._trend = []               # FIELD only: (t, ppm), one point per trend_secs/30 (~31 max)
 
+    def clear_event(self):
+        """Forget a sudden rise that is still being held (pause/resume from the
+        base): the level drops to ELEVATED/NORMAL at the next reading. The
+        baseline is kept."""
+        self.last_sudden_time = None
+        self._fast = 0
+        self.rise = self.rise_secs = self.rh_jump = 0
+
     def learning_left(self, now):
         return max(0, self.baseline_secs - (now - self.start))
 

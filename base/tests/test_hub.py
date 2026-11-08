@@ -77,3 +77,21 @@ class HubTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PauseAll(unittest.TestCase):
+    def test_pause_all_sends_to_every_node(self):
+        import asyncio
+        tmp = tempfile.TemporaryDirectory()
+        sent = []
+        src = FakeSource()
+        src.send = sent.append
+        hub = Hub(src, EventDB(os.path.join(tmp.name, "t.db")))
+        for n in (1, 2):
+            hub.handle_line(f'{{"t":"HB","n":{n},"st":"NO SIGNS"}}', 1)
+        asyncio.run(hub.pause_all(True, "Ana"))
+        self.assertEqual(sent, [{"t": "PAUSE", "n": 1, "on": True}, {"t": "PAUSE", "n": 2, "on": True}])
+        self.assertTrue(hub.db.get_kv()["paused"])
+        self.assertIn("All nodes paused (demo) by Ana", hub.state.events[0]["desc"])
+        hub.db.conn.close()
+        tmp.cleanup()

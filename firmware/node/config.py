@@ -22,6 +22,7 @@ ENABLE_VIBRATION = False     # set True once the vibration sensor is wired to 3V
 ENABLE_SOUND = True
 ENABLE_CO2 = True            # SCD41 on the SEN-25200 via STEMMA QT / I2C
 ENABLE_TILT = False          # tilt switch on D6 -> DANGER siren (not wired yet)
+ENABLE_SPEAKER = True        # False = no beeps at all (e.g. if its static bothers the mic)
 ENABLE_GPS = True            # Mini GPS PA1010D on I2C 0x10 (Qwiic, chained after the CO2 board)
 
 # ---- location ----
@@ -75,7 +76,9 @@ SOUND_VOICE_THRESHOLD = 14000   # lower: moderately loud but sustained = VOICE
                                 # set just ABOVE your quiet-room "loudest slice" value
 SOUND_WINDOW = 0.03             # 30 ms slices
 TAP_MAX_WINDOWS = 4             # TAP lasts <= 4 slices (~0.12 s)
-VOICE_MIN_WINDOWS = 6           # VOICE lasts >= 6 slices (~0.2 s)
+VOICE_MIN_WINDOWS = 10          # VOICE lasts >= 10 slices (~0.3 s; was 6: too eager in a quiet room)
+SOUND_VOICE_MARGIN = 4000       # a voice must be this much louder than the room's learned quiet level
+SOUND_TAP_MARGIN = 8000         # a knock: this much louder (raise both if silence still triggers)
 
 # ---- CO2 (SCD41) ----
 # Measured (tests/RESULTS.md): room ~810 ppm (drifts as the room fills); breath at

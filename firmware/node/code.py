@@ -19,7 +19,7 @@ brain = Assessor(activity_window=config.ACTIVITY_WINDOW, response_window=config.
                  confirm_window=config.CONFIRM_WINDOW, combine_window=config.COMBINE_WINDOW,
                  arm_until=arm_until)
 beeper = BeepPlayer(config.PIN_SPEAKER, config.BASE_FREQ, config.BEEPS, config.BEEP_PRIORITY,
-                    config.MIC_TAIL)
+                    config.MIC_TAIL, enabled=config.ENABLE_SPEAKER)
 caller = Caller(config.CALL_INTERVAL, config.LISTEN_SECS, config.RESPONSE_MIN_TAPS,
                 first_call_at=max(arm_until, boot + config.CALL_INTERVAL))
 
@@ -39,7 +39,8 @@ if config.ENABLE_SOUND:
         sound = SoundSensor(config.PIN_SOUND,
                             config.SOUND_TAP_THRESHOLD, config.SOUND_VOICE_THRESHOLD,
                             config.SOUND_WINDOW, config.TAP_MAX_WINDOWS,
-                            config.VOICE_MIN_WINDOWS)
+                            config.VOICE_MIN_WINDOWS, config.SOUND_VOICE_MARGIN,
+                            config.SOUND_TAP_MARGIN)
     except Exception as e:
         print("Sound sensor not available (", e, ") - continuing without it")
 
@@ -144,12 +145,16 @@ def set_danger_cmd(on, now):
     next_siren = now                            # siren right away when switched on
 
 
+# ---------- PAUSE (demo): no sensing, no calls, no beeps, almost no radio ----------
+paused = False
+PAUSED_HB = 30          # a paused node still says "I'm here, paused" this often (so it isn't LOST)
+
 # ---------- commands from the base (USB serial now, LoRa later) ----------
 cmd_buf = ""
 
 
 def handle_command(line, now):
-    global message_text, message_until, prompt_until, mic_was_ignored
+    global message_text, message_until, prompt_until, mic_was_ignored, paused, last_st, next_hb, next_loc
     start = line.find("{")
     if start < 0:
         return                                   # someone typing in the console
@@ -200,6 +205,28 @@ def handle_command(line, now):
         on = bool(cmd.get("on"))
         print("COMMAND: danger alarm", "ON" if on else "off")
         set_danger_cmd(on, now)
+    elif t == "PAUSE":
+        on = bool(cmd.get("on"))
+        if on != paused:
+            paused = on
+            print("COMMAND:", "PAUSED (demo): sensors, calls and beeps off" if on else "resumed")
+            beeper.silence(now)
+            caller.reset(now)                    # after a resume the next call is one interval away
+            if sound:
+                sound.reset_run()
+            mic_was_ignored = True               # in-progress sound is discarded on resume
+            # Pause and resume both wipe the evidence: the node shows NO SIGNS and
+            # stays there until something NEW and real happens after the resume.
+            brain.reset("paused by base" if on else "no evidence yet")
+            if co2:
+                co2.levels.clear_event()         # a held CO2 rise doesn't come back either
+            if on:
+                report(t="ST", st="NO SIGNS", why="paused by base", ev=brain.evidence(now))
+                last_st = ("NO SIGNS", "paused by base")
+            else:
+                last_st = (None, None)           # send the status again right away
+                next_hb = next_loc = now
+        report(t="EV", e="PAUSE", on=paused)
     elif t == "SETLOC":
         try:
             lat, lon = float(cmd.get("lat")), float(cmd.get("lon"))
@@ -231,7 +258,7 @@ def read_commands(now):
 
 # ---------- startup self-check: which parts answered? ----------
 sensors_ok = {"sound": sound is not None, "co2": co2 is not None, "gps": bool(gps and gps.ok),
-              "button": True, "speaker": beeper.pwm is not None}
+              "button": True, "speaker": beeper.ok}
 print("SELF-CHECK:", " ".join("%s=%s" % (k, "ok" if v else "MISSING") for k, v in sensors_ok.items()))
 report(t="EV", e="BOOT", sensors=sensors_ok)
 
@@ -254,6 +281,21 @@ while True:
     now = time.monotonic()
     read_commands(now)
     beeper.update(now)                           # advance the beep pattern (never blocks)
+
+    if paused:
+        # demo pause: nothing is sensed or recorded, no calls or beeps; only a tiny
+        # heartbeat every PAUSED_HB s so the base shows PAUSED instead of LOST
+        for b in buttons:
+            b.set_led(now, "off")
+        shown = ("PAUSED",)
+        if shown != last_shown:
+            ui.show("NO SIGNS", "paused by base", False, "PAUSED (DEMO)", "PAUSED")
+            last_shown = shown
+        if now >= next_hb:
+            report(t="HB", st="NO SIGNS", paused=1)
+            next_hb = now + PAUSED_HB
+        time.sleep(0.02)
+        continue
 
     # ---------- 1. SENSE ----------
     for b in buttons:
@@ -451,7 +493,11 @@ while True:
         # latest sensor readings, in their own small message
         sn = {"t": "SN"}
         if sound:
-            sn["snd"] = loudest
+            sn["snd"] = loudest                  # loudest slice since the last heartbeat
+            voice_t, tap_t = sound.thresholds()
+            sn["nf"] = int(sound.floor or 0)     # the room's learned quiet level
+            sn["vt"] = int(voice_t)              # thresholds in use (for the dashboard chart)
+            sn["tt"] = int(tap_t)
         if battery and battery.percent is not None:
             sn["bat"] = battery.percent
         if co2 and co2.ppm is not None:
