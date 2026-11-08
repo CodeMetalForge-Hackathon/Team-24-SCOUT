@@ -32,6 +32,8 @@ class Node:
         self.base = None
         self.danger = False
         self.answers = {"injured": None, "count": None}
+        self.snd = None             # loudest sound level in the last heartbeat period
+        self.last_sound = None      # {"k": "TAP"/"VOICE", "ts": ...}
         self.co2_hist = deque()     # (ts, co2, base)
         self.events = deque(maxlen=NODE_EVENTS)
 
@@ -47,6 +49,7 @@ class Node:
             "rssi": self.rssi, "bat": self.bat, "co2": self.co2, "base": self.base,
             "danger": self.danger,
             "answers": dict(self.answers),
+            "snd": self.snd, "last_sound": self.last_sound,
             "co2_hist": [[round(t, 1), c, b] for t, c, b in self.co2_hist],
             "events": list(self.events),
         }
@@ -66,7 +69,7 @@ class State:
         """Update a node from one parsed message. Returns a timeline event or None."""
         nd = self.node(msg["n"], ts)
         nd.last_seen = max(nd.last_seen, ts)
-        for key in ("rssi", "bat", "co2", "base"):
+        for key in ("rssi", "bat", "co2", "base", "snd"):
             if key in msg:
                 setattr(nd, key, msg[key])
         if "st" in msg:
@@ -87,6 +90,8 @@ class State:
                 nd.danger = True        # cleared by the next heartbeat with dg=0
             elif msg["e"] == "ANS":
                 nd.answers[msg["q"]] = msg["a"]
+            elif msg["e"] == "SOUND":
+                nd.last_sound = {"k": msg["k"], "ts": ts}
         if msg["t"] == "HB":
             return None
         ev = make_event(msg, ts, ev_id=ev_id)

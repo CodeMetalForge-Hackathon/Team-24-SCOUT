@@ -68,7 +68,9 @@
   .warn { color: var(--s-possible) !important; }
   .bad  { color: var(--s-unresp) !important; }
 
-  .survivor { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .survivor { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 10px; }
+  .survivor .sound { border-left-color: var(--s-possible); }
+  .heard { color: var(--s-possible); }
   .survivor .stat { border-left: 5px solid var(--blue); }
   .survivor .v { font-size: 26px; }
   .yes { color: var(--s-unresp); } .no { color: var(--s-confirmed); } .unk { color: var(--muted); }
@@ -121,6 +123,7 @@
     #clock { font-size: 22px; }
     main { padding: 12px; gap: 12px; }
     .stats { grid-template-columns: 1fr 1fr; }
+    .survivor { grid-template-columns: 1fr 1fr; } .survivor .sound { grid-column: span 2; }
     .pill { font-size: 24px; } .node-name { font-size: 22px; }
   }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
@@ -160,6 +163,7 @@
     <div class="survivor">
       <div class="stat"><div class="k">Injured?</div><div class="v" data-r="injured">unknown</div></div>
       <div class="stat"><div class="k">People</div><div class="v" data-r="people">unknown</div></div>
+      <div class="stat sound"><div class="k">Last sound</div><div class="v" data-r="sound">none</div><div class="s" data-r="soundS"></div></div>
     </div>
     <div class="chart-wrap">
       <div class="k"><span>CO₂, last 10 min</span><span>- - baseline</span></div>
@@ -279,6 +283,10 @@ function render(nd) {
   const cnt = nd.answers?.count;
   r.people.textContent = cnt == null ? "unknown" : cnt;
   r.people.className = "v " + (cnt == null ? "unk" : "");
+  const ls = nd.last_sound;
+  r.sound.textContent = ls ? (ls.k === "TAP" ? "Knock" : "Voice") : "none";
+  r.sound.className = "v " + (!ls ? "unk" : now - ls.ts < 15 ? "heard" : "");
+  r.soundS.textContent = (ls ? ago(now - ls.ts) : "") + (nd.snd != null ? `${ls ? " · " : ""}level ${nd.snd}` : "");
   drawChart(r.chart, nd);
 }
 
@@ -343,7 +351,8 @@ function addEvent(ev, isNew) {
   const dot = document.createElement("span"); dot.className = "tdot";
   if (!ev.out) {
     const st = /status is now (NO SIGNS|POSSIBLE|LIKELY|CONFIRMED|UNRESPONSIVE)/.exec(ev.desc);
-    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : st ? STATUS_COLOR[st[1]] : "#a3afbc";
+    dot.style.background = ev.e === "SHIFT" ? "#ff3b3b" : ev.e === "SOUND" ? "#ff8c1a"
+      : st ? STATUS_COLOR[st[1]] : "#a3afbc";
   }
   const t = document.createElement("time"); t.textContent = hms(ev.ts);
   const txt = document.createElement("span"); txt.textContent = `Node ${ev.n}: ${ev.desc}`;

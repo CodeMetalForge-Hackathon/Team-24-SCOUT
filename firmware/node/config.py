@@ -5,6 +5,7 @@ NODE_ID = 1
 DEMO_MODE = True
 CALL_INTERVAL = 20 if DEMO_MODE else 60   # seconds between "calls"
 ACTIVITY_WINDOW = 15 if DEMO_MODE else 120
+HEARTBEAT_INTERVAL = 3 if DEMO_MODE else 30   # seconds between {"t":"HB"} report lines
 
 # ---- turn sensors on/off ----
 ENABLE_VIBRATION = False     # set True once the vibration sensor is wired to 3V/GND/5

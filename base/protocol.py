@@ -7,13 +7,15 @@ so the parser NEVER raises: it returns (msg, None) or (None, "why it was rejecte
 import json
 
 STATUSES = ("NO SIGNS", "POSSIBLE", "LIKELY", "CONFIRMED", "UNRESPONSIVE")
-EVENTS = ("BTN", "TAP", "NORESP", "SHIFT", "ANS")
+EVENTS = ("BTN", "TAP", "NORESP", "SHIFT", "ANS", "SOUND")
+SOUND_KINDS = ("TAP", "VOICE")   # SOUND event: knock vs. sustained voice heard by the mic
 QUESTIONS = ("injured", "count")
 MSG_MAX = 60  # node screen fits ~60 characters
 
 # Optional numeric fields: name -> type. Bad values are dropped, not fatal.
 _NUMERIC = {"co2": float, "base": float, "bat": float, "rssi": float,
-            "dg": int, "taps": int, "calls": int}
+            "dg": int, "taps": int, "calls": int,
+            "snd": int}   # loudest sound level since the last heartbeat (0..65535)
 
 
 def _num(value, kind):
@@ -84,6 +86,11 @@ def parse_line(line):
                 return None, "ANS needs q (injured/count) and a"
             msg["q"] = q
             msg["a"] = str(a)[:20]
+        elif e == "SOUND":
+            k = raw.get("k")
+            if k not in SOUND_KINDS:
+                return None, "SOUND needs k (TAP/VOICE)"
+            msg["k"] = k
     return msg, None
 
 
@@ -142,6 +149,8 @@ def describe(msg, outgoing=False):
         return f"no answer to call ({calls} unanswered)" if calls else "no answer to call"
     if e == "SHIFT":
         return "PILE MOVEMENT detected: clear the area"
+    if e == "SOUND":
+        return "heard a knock" if msg.get("k") == "TAP" else "heard a voice"
     if e == "ANS":
         q, a = msg.get("q"), msg.get("a")
         if q == "injured":
