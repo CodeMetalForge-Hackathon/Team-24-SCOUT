@@ -57,7 +57,7 @@ class Assessor:
     def arming(self, now):
         return self.arm_until is not None and now < self.arm_until
 
-    def reset(self):
+    def reset(self, reason="no evidence yet"):
         """Forget all evidence and counters (false alarm). Sensor baselines and
         the DANGER flag are not evidence and are kept."""
         self.confirmed_by = None        # what confirmed the survivor
@@ -72,6 +72,7 @@ class Assessor:
         self.co2_rise_secs = 0          # over this many seconds
         self.co2_rh_jump = 0            # humidity points
         self.unanswered_calls = 0       # calls in a row with no answer
+        self.idle_reason = reason       # what NO SIGNS says ("status cleared by base" after RESET)
 
     # ---- evidence inputs ----
     def button_press(self, now):
@@ -81,6 +82,7 @@ class Assessor:
         if self.arming(now):
             return None
         self.unanswered_calls = 0                    # a press is an answer too
+        self.idle_reason = "no evidence yet"
         if self.confirmed_by:
             return "confirmed"                       # already latched
         if self.awaiting_second(now):
@@ -99,6 +101,7 @@ class Assessor:
             return
         self.last_response = now
         self.response_kind = kind
+        self.idle_reason = "no evidence yet"
         self.response_taps = taps
         self.unanswered_calls = 0
 
@@ -116,6 +119,7 @@ class Assessor:
             return
         self.last_activity = now
         self.activity_kind = kind
+        self.idle_reason = "no evidence yet"
 
     def set_co2(self, level, rise, rise_secs, rh_jump, now):
         """Latest CO2 level from co2logic. Supporting evidence only: it can make
@@ -127,6 +131,8 @@ class Assessor:
         self.co2_rise = rise
         self.co2_rise_secs = rise_secs
         self.co2_rh_jump = rh_jump
+        if level in CO2_EVIDENCE:
+            self.idle_reason = "no evidence yet"
 
     def set_danger(self, on):
         self.danger = on
@@ -201,4 +207,4 @@ class Assessor:
             return POSSIBLE, "single press, not confirmed"
 
         # 5.
-        return NO_SIGNS, "no evidence yet"
+        return NO_SIGNS, self.idle_reason

@@ -13,8 +13,10 @@ Fully offline: the dashboard is one local HTML file, no CDNs.
 import argparse
 import asyncio
 import contextlib
+import csv
 import json
 import logging
+import re
 import socket
 import time
 from pathlib import Path
@@ -30,14 +32,38 @@ log = logging.getLogger("base")
 HERE = Path(__file__).resolve().parent
 REPLAY_SECS = 6 * 3600   # on restart, rebuild node state from the last 6 h of the log
 ALERT_KINDS = ("UNRESPONSIVE", "CONFIRMED", "DANGER")
+ARCHIVE_DIR = HERE / "archive"
+
+
+def row_info(direction, raw):
+    """Plain-English description + category of one logged row."""
+    with contextlib.suppress(ValueError, TypeError, KeyError):
+        if direction == "in":
+            msg, _ = parse_line(raw)
+            return (describe(msg), category(msg)) if msg else ("unreadable line", "system")
+        if direction == "out":
+            cmd = json.loads(raw)
+            return describe(cmd, outgoing=True), category(cmd, outgoing=True)
+        note = json.loads(raw)
+        return note["desc"], note["cat"]
+    return "", ""
+
+
+def slug(text):
+    return re.sub(r"[^A-Za-z0-9]+", "-", text or "").strip("-")[:40] or "incident"
+
+
+def hhmm(ts):
+    return time.strftime("%H:%M", time.localtime(ts))
 
 
 class Hub:
     """Owns the state and fans updates out to every open dashboard."""
 
-    def __init__(self, source, db):
+    def __init__(self, source, db, archive_dir=ARCHIVE_DIR):
         self.source = source
         self.db = db
+        self.archive_dir = archive_dir
         self.state = State()
         self.clients = set()
         self.loop = None
@@ -197,6 +223,87 @@ class Hub:
             self.note(n, f"Notes updated by {by}", "system")
         self._push({"type": "node_meta", "node_meta": self.db.get_node_meta()})
 
+    # ---------- resets ----------
+    def archive(self, node, ts):
+        """Copy everything about one node (or all) to base/archive/ as JSON + CSV,
+        BEFORE it is deleted from the live database. Returns the JSON file name."""
+        meta = self.db.get_kv()
+        scope = f"node{node}" if node is not None else "all"
+        name = f"{slug(meta.get('incident'))}_{scope}_{time.strftime('%Y%m%d-%H%M%S', time.localtime(ts))}"
+        events = []
+        for ev_id, ets, n, type_, direction, raw in self.db.all_for(node):
+            desc, cat = row_info(direction, raw)
+            events.append({"id": ev_id, "ts": ets, "time": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ets)),
+                           "node": n, "type": type_, "dir": direction, "cat": cat, "desc": desc, "raw": raw})
+        snap = self.state.snapshot(ts)
+        node_meta = self.db.get_node_meta()
+        data = {"incident": meta.get("incident"), "base": meta.get("base"),
+                "archived_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts)),
+                "scope": scope,
+                "nodes": [nd for n, nd in snap.items() if node is None or n == node],
+                "node_meta": {n: m for n, m in node_meta.items() if node is None or n == node},
+                "alerts": self.db.alerts_for(node), "events": events}
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        (self.archive_dir / f"{name}.json").write_text(json.dumps(data, indent=1))
+        with open(self.archive_dir / f"{name}.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "time", "node", "type", "direction", "category", "description", "raw"])
+            for e in events:
+                w.writerow([e["id"], e["time"], e["node"], e["type"], e["dir"], e["cat"], e["desc"], e["raw"]])
+        log.info("archived %d events to %s", len(events), name)
+        return f"{name}.json"
+
+    async def full_reset(self, n, keep, by):
+        """Restart node n and start its dashboard history from scratch (archived first).
+        keep: {"gps", "team", "notes", "tag"} -> bool."""
+        by = (by or "").strip()[:30] or "Operator"
+        # 1. tell the node (ConnectionError -> nothing is cleared)
+        await asyncio.to_thread(self.source.send, {"t": "REBOOT", "n": n, "keep_gps": bool(keep.get("gps", True))})
+        ts = time.time()
+        # 2. archive, 3. delete from the live tables
+        archived = self.archive(n, ts)
+        self.db.clear(n)
+        old = self.db.get_node_meta().get(n, {"team": "", "notes": "", "tag": ""})
+        kept = {k: (old[k] if keep.get(k) else "") for k in ("team", "notes", "tag")}
+        if any(kept.values()):
+            self.db.set_node_meta(n, kept["team"], kept["notes"], kept["tag"])
+        else:
+            self.db.delete_node_meta(n)
+        # 4. the node shows "restarting..." until its BOOT arrives
+        self.state.reset_node(n, ts)
+        self._lost.pop(n, None)
+        # 5. one audit line stays in the live log
+        self.note(n, f"Node {n} fully reset by {by} at {hhmm(ts)} (archived: {archived})", "system", ts)
+        self._push({"type": "reset", "text": f"Node {n} fully reset. Archived to base/archive/{archived}"})
+        self._push(self.full())
+        return archived
+
+    async def new_incident(self, name, keep_gps, by):
+        """Restart every node and start a new incident (everything archived first)."""
+        name = (name or "").strip()[:60]
+        if not name:
+            raise ValueError("give the new incident a name")
+        by = (by or "").strip()[:30] or "Operator"
+        not_reached = []
+        for n in sorted(self.state.nodes):
+            try:
+                await asyncio.to_thread(self.source.send, {"t": "REBOOT", "n": n, "keep_gps": bool(keep_gps)})
+            except Exception as exc:              # e.g. a LOST node: archive + clear anyway
+                not_reached.append(n)
+                log.warning("REBOOT to node %s failed: %s", n, exc)
+        ts = time.time()
+        archived = self.archive(None, ts)
+        self.db.clear(None)
+        self.db.delete_node_meta(None)
+        self.db.set_kv("incident", name)
+        self.state.reset_all(ts)
+        self._lost = {}
+        self.note(None, f"New incident '{name}' started by {by} (archived: {archived})", "system", ts)
+        extra = f" Not reached: node {', '.join(map(str, not_reached))}." if not_reached else ""
+        self._push({"type": "reset", "text": f"New incident '{name}'. Archived to base/archive/{archived}.{extra}"})
+        self._push(self.full())
+        return archived, not_reached
+
     # ---------- outgoing ----------
     async def command(self, cmd):
         cmd = validate_command(cmd)            # ValueError -> 400
@@ -290,19 +397,7 @@ def create_app(source, db_path, defaults=None):
         out = []
         for ev_id, ts, node, type_, direction, raw in rows:
             item = {"id": ev_id, "ts": ts, "n": node, "type": type_, "dir": direction, "raw": raw}
-            if direction == "in":
-                msg, _ = parse_line(raw)
-                item["desc"] = describe(msg) if msg else "unreadable line"
-                item["cat"] = category(msg) if msg else "system"
-            elif direction == "out":
-                with contextlib.suppress(ValueError, TypeError):
-                    cmd = json.loads(raw)
-                    item["desc"] = describe(cmd, outgoing=True)
-                    item["cat"] = category(cmd, outgoing=True)
-            else:
-                with contextlib.suppress(ValueError, TypeError, KeyError):
-                    note = json.loads(raw)
-                    item["desc"], item["cat"] = note["desc"], note["cat"]
+            item["desc"], item["cat"] = row_info(direction, raw)
             out.append(item)
         return out
 
@@ -347,6 +442,39 @@ def create_app(source, db_path, defaults=None):
         except ValueError as exc:
             return bad(str(exc))
         return {"ok": True}
+
+    @app.post("/api/reset")
+    async def api_reset(request: Request):
+        """Full reset of one node: {"n": 1, "keep": {"gps": true, "team": false, ...},
+        "confirm": "RESET", "by": "Ana"}. (Clear status = /api/cmd {"t":"RESET"}.)"""
+        try:
+            body = await _json_body(request)
+            if body.get("confirm") != "RESET":
+                raise ValueError("type RESET to confirm")
+            n = body.get("n")
+            if not isinstance(n, int) or n not in hub.state.nodes:
+                raise ValueError("unknown node")
+            keep = body.get("keep") if isinstance(body.get("keep"), dict) else {}
+            archived = await hub.full_reset(n, keep, body.get("by"))
+        except ValueError as exc:
+            return bad(str(exc))
+        except Exception as exc:
+            log.warning("full reset failed: %s", exc)
+            return bad(f"could not reach the node: {exc}", 503)
+        return {"ok": True, "archived": archived}
+
+    @app.post("/api/new_incident")
+    async def api_new_incident(request: Request):
+        """{"name": "...", "keep_gps": true, "confirm": "RESET", "by": "Ana"}"""
+        try:
+            body = await _json_body(request)
+            if body.get("confirm") != "RESET":
+                raise ValueError("type RESET to confirm")
+            archived, not_reached = await hub.new_incident(body.get("name"), body.get("keep_gps", True) is not False,
+                                                           body.get("by"))
+        except ValueError as exc:
+            return bad(str(exc))
+        return {"ok": True, "archived": archived, "not_reached": not_reached}
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):

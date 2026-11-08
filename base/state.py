@@ -57,6 +57,7 @@ class Node:
         self.first_seen = ts
         self.last_seen = ts
         self.status = "NO SIGNS"
+        self.pending_reboot = None  # time a full reset was sent; cleared by the node's BOOT
         self.status_since = ts      # when the status last changed (triage: longest waiting first)
         self.why = ""
         self.why_ts = ts            # when 'why' arrived (lets the page tick a countdown)
@@ -96,6 +97,7 @@ class Node:
             "status": "LOST" if lost else self.status,
             "last_status": self.status,     # what it said before going quiet
             "status_since": self.status_since,
+            "pending_reboot": self.pending_reboot,
             "why": f"no message for {int(now - self.last_seen)} s" if lost else self.why,
             "why_ts": self.why_ts,
             "lost": lost,
@@ -194,6 +196,7 @@ class State:
                 nd.danger = msg["on"]
             elif msg["e"] == "BOOT":
                 nd.parts = msg.get("sensors")
+                nd.pending_reboot = None            # the node is back after a full reset
             elif msg["e"] == "CALL":
                 nd.call_state, nd.call_ts = "CALLING", ts
                 nd.listen_end = ts + CALL_AUDIO + LISTEN_SECS       # estimate until the next HB
@@ -220,6 +223,22 @@ class State:
         nd.events.appendleft(ev)
         self.events.appendleft(ev)
         return ev
+
+    def reset_node(self, n, ts):
+        """Full reset: forget everything about node n; show it as 'awaiting boot'."""
+        nd = Node(n, ts)
+        nd.pending_reboot = ts
+        self.nodes[n] = nd
+        kept = [e for e in self.events if e["n"] != n]
+        self.events.clear()
+        self.events.extend(kept)
+
+    def reset_all(self, ts):
+        """New incident: every known node starts over ('awaiting boot'), timeline empty."""
+        for n in list(self.nodes):
+            self.nodes[n] = Node(n, ts)
+            self.nodes[n].pending_reboot = ts
+        self.events.clear()
 
     def add_note(self, n, desc, cat, ts, ev_id=None):
         """A base-side timeline line (alert, acknowledgement, assignment, setting)."""
