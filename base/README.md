@@ -51,28 +51,28 @@ should use, e.g. `http://192.168.1.20:8000`. On a Mac, click **Allow** if the fi
 Options: `--http-port 8000`, `--baud 115200`, `--db path.db`, `--one-node` (simulator with node 1 only).
 
 ### What the simulator does
-The fake nodes run the **real node logic** (`firmware/node/assess.py`, `co2logic.py` and
-`caller.py`, DEMO profile), so statuses, calls, CO2 levels and countdowns match the board
-exactly; only the raw sensor values and the "survivor" are invented. Node 1 loops a ~6 min
-story through every rule (calls every ~32 s throughout; the CO2 baseline is learned in the first 30 s):
+Three fake nodes run the **real node logic** (`firmware/node/assess.py`, `co2logic.py`, `caller.py`,
+`location.py`, DEMO profile) and send exactly the messages the board sends. Only the raw sensor
+values and the "survivors" are invented. The story loops every ~7 min; at the start every node
+boots (BOOT → NO SIGNS "starting up (arming 10s)") and calls every ~32 s.
 
-| Time | What happens | Status |
-|---|---|---|
-| 36 s | breathing on the CO2 sensor | POSSIBLE "breathing detected …" |
-| 50 s | unprompted knock while breathing | **LIKELY "breathing + knocking"** |
-| ~110 s | CO2 evidence expires | NO SIGNS (calls keep going unanswered) |
-| 175 s | breathing again, several calls already missed | **UNRESPONSIVE "breathing but no answer to N calls"** (red, pulsing) |
-| ~218 s | knocks back during a call | **LIKELY "tapped back 2 times after call"** |
-| 290 s | unprompted knock | POSSIBLE "heard knocking" |
-| 305 / 312 s | press, press again | LIKELY countdown (calls paused) → **CONFIRMED** (calls stop) |
-| 330–345 s | danger alarm on/off | ⚠ DANGER banner, siren every 10 s |
+| Time | Node 1 (GPS LIVE, ~40 m NE) | Node 2 (~145 m SW) | Node 3 (no GPS) |
+|---|---|---|---|
+| 0–10 s | arming | arming | arming |
+| 15 s | | GPS fix → **LIVE** | NO POSITION → set it on the dashboard → **MANUAL** |
+| 36 s | breathing → POSSIBLE "breathing detected" | | |
+| 50 s | + unprompted knock → **LIKELY "breathing + knocking"** | | |
+| 105 s | | voice → POSSIBLE "heard voice" | |
+| 150 s | | fix lost → **LAST KNOWN**, age growing | |
+| 175 s | breathing, calls missed → **UNRESPONSIVE** (alert) | | |
+| ~218 s | knocks back in a call → LIKELY "tapped back 2 times" | | |
+| 240 s | | | goes silent → **LOST** at ~330 s |
+| 290 s | unprompted knock → POSSIBLE "heard knocking" | | |
+| 305 / 312 s | press → countdown, press again → **CONFIRMED** (alert) | | |
+| 330–345 s | **DANGER** alarm on/off (alert) | | |
 
-Node 2 stays NO SIGNS and never answers its calls. The buttons work: **Call now** starts a call
-as soon as the node allows it, **Danger alarm** switches the siren on/off, **Send** messages make
-the node beep, and **Reset** clears the node and restarts its story.
-
-Click **🔔 Enable alert sound** once: browsers only play sound after you've clicked on the page.
-CONFIRMED then plays three rising beeps.
+The dashboard commands work against the simulator too: Call now, messages, Danger alarm,
+Set location manually, Reset (restarts the story).
 
 ## Finding the serial port
 
@@ -115,31 +115,38 @@ journalctl -u rubble-base -f        # live log
 
 ## Message protocol
 
-Node → base (the receiver adds `rssi`). Lines that aren't valid are logged and skipped. They never crash the app.
+One JSON object per line, every message < 200 bytes so it fits one LoRa packet. The receiver
+adds `rssi`. Lines that aren't valid are logged and skipped and never crash the app; unknown
+fields are ignored.
 
-| Line | Meaning |
+**Node → base**
+
+| Line | When / meaning |
 |---|---|
-| `{"t":"HB","n":1,"st":"POSSIBLE","why":"sudden CO2 rise +240 ppm in 10s","co2":1050,"base":810,"rh":49.5,"rh_base":48.1,"lvl":"SUDDEN_RISE","hold":42,"prof":"DEMO","dg":0,"danger":false,"call_state":"LISTENING","listen_left":7,"next_call_in":0,"calls_unanswered":1,"mic":"on","rssi":-48}` | heartbeat, every 10 s (DEMO) / 30 s (FIELD); `hold` = seconds of CO2 evidence left |
-| `{"t":"EV","n":1,"e":"CO2","lvl":"BREATHING","prev":"NORMAL","rise":380,"secs":10,"rh_jump":6,"hold":60,"base":810}` | CO2 level changed: LEARNING / NORMAL / ELEVATED (info only) / SUDDEN_RISE / BREATHING / SLOW_BUILDUP (FIELD). See [docs/co2.md](../docs/co2.md) |
-| `{"t":"ST","n":1,"st":"LIKELY","why":"pressed once - press again (14s)"}` | status changed (countdown ticks at most every 5 s; the page counts down in between) |
-| `{"t":"EV","n":1,"e":"BTN","stage":"first"}` | PRESS ME pressed once: waiting for a 2nd press within 20 s |
-| `{"t":"EV","n":1,"e":"BTN","stage":"confirmed"}` | pressed twice: **survivor confirmed** (alert sound) |
-| `{"t":"EV","n":1,"e":"STUCK"}` | button held ≥ 5 s: probably debris, press ignored |
-| `{"t":"EV","n":1,"e":"TAP"}` / `{"t":"EV","n":1,"e":"VOICE"}` | mic heard knocking / a voice |
+| `{"t":"EV","n":1,"e":"BOOT","sensors":{"sound":true,"co2":true,"gps":false,"button":true,"speaker":true}}` | node started: self-check of its parts |
+| `{"t":"ST","n":1,"st":"UNRESPONSIVE","why":"breathing but no answer to 2 calls","ev":{…}}` | status or reason changed (countdowns at most every 5 s) |
+| `{"t":"HB","n":1,"st":"POSSIBLE","ev":{"btn":"none","snd":"TAP","co2":"BREATHING","resp":0,"miss":1,"dg":0},"cs":"LISTENING","ll":7,"nc":0,"mic":"on","prof":"DEMO"}` | heartbeat every 10 s (DEMO) / 30 s (FIELD): status, evidence, call cycle (`cs` state, `ll` listen seconds left, `nc` next call in) |
+| `{"t":"SN","n":1,"co2":1127,"base":813,"rh":52.3,"rhb":48.1,"lvl":"BREATHING","hold":54,"snd":12000,"bat":87}` | sensor readings, with every heartbeat |
+| `{"t":"LOC","n":1,"src":"LAST","lat":42.36031,"lon":-71.0588,"acc":8,"age":312,"sats":7}` | location, every 30 s and when the source changes (`label` for MANUAL) |
+| `{"t":"EV","n":1,"e":"BTN","stage":"first"}` / `"stage":"confirmed"` | button pressed once / twice |
+| `{"t":"EV","n":1,"e":"STUCK"}` | button held ≥ 5 s: probably debris, ignored |
+| `{"t":"EV","n":1,"e":"TAP"}` / `{"t":"EV","n":1,"e":"VOICE"}` | unprompted knocking / voice |
 | `{"t":"EV","n":1,"e":"CALL"}` | node started a call (3 beeps), then listens 10 s |
 | `{"t":"EV","n":1,"e":"RESP","kind":"TAP","taps":3}` / `"kind":"VOICE"` | survivor answered the call |
 | `{"t":"EV","n":1,"e":"NORESP","calls":2}` | call went unanswered (2 in a row) |
-| `{"t":"EV","n":1,"e":"BEEP","p":"CONFIRM"}` | node played a beep pattern (logged, not on the timeline) |
+| `{"t":"EV","n":1,"e":"CO2","lvl":"BREATHING","prev":"NORMAL","rise":380,"secs":10,"rh_jump":6,"hold":60}` | CO2 level changed. See [docs/co2.md](../docs/co2.md) |
 | `{"t":"EV","n":1,"e":"DANGER","on":true}` | danger alarm (siren) on / off |
-| `{"t":"EV","n":1,"e":"ANS","q":"injured","a":"yes"}` | survivor answered a question |
+| `{"t":"EV","n":1,"e":"BEEP","p":"CONFIRM"}` | node played a beep pattern (logged, not on the timeline) |
 
-Base → node (written to the receiver's serial port, one line each):
-`{"t":"CALL","n":1}`, `{"t":"MSG","n":1,"txt":"Help is coming. Stay still."}` (max 60 chars),
-`{"t":"DANGER","n":1,"on":true}`, `{"t":"RESET","n":1}` (false alarm: node forgets all
-evidence and counters). The node handles CALL, MSG, DANGER and RESET; `ASK` is for later.
+`ev`, the **evidence snapshot**, says why the node chose its status: `btn` none/first/confirmed,
+`snd` none/TAP/VOICE (unprompted, last 2 min), `co2` level, `resp` 1 if it answered a call recently,
+`miss` calls missed in a row, `dg` danger alarm. The dashboard shows it as the "Why this status" list.
+(Older nodes that send the long field names `call_state`, `listen_left`, `next_call_in`,
+`calls_unanswered`, `rh_base` and everything in HB are still understood.)
 
-Statuses: `NO SIGNS`, `POSSIBLE`, `LIKELY`, `CONFIRMED`, `UNRESPONSIVE`. The dashboard shows
-`LOST` itself when it hasn't heard from a node for 90 s.
+**Base → node** (written to the serial port, one line each): `{"t":"CALL","n":1}`,
+`{"t":"MSG","n":1,"txt":"Help is coming. Stay still."}` (max 60 chars), `{"t":"DANGER","n":1,"on":true}`,
+`{"t":"SETLOC","n":3,"lat":42.36,"lon":-71.05,"label":"Site B NE corner"}`, `{"t":"RESET","n":1}`.
 
 ## How the node talks to a survivor and decides
 
@@ -176,6 +183,7 @@ NORMAL and LEARNING never change the status. CO2 alone can never make CONFIRMED.
 
 | # | Status | Rule | Reason shown |
 |---|---|---|---|
+| 0 | NO SIGNS | first 10 s (DEMO) / 30 s (FIELD) after power-on: **arming**. Sensors settle, no evidence is recorded, no calls | starting up (arming 7s) |
 | 1 | **CONFIRMED** | button pressed twice within 20 s (latched until Reset) | pressed button twice |
 | 2a | **LIKELY** | first press, waiting for the second | pressed once - press again (14s) |
 | 2b | LIKELY | answered a call within 60 s (DEMO) / 300 s (FIELD) | tapped back 3 times after call / answered by voice after call |
@@ -194,27 +202,75 @@ NORMAL and LEARNING never change the status. CO2 alone can never make CONFIRMED.
   status; it never changes the status, and Reset doesn't clear it.
 - **Reset** clears all evidence and counters, not the sensors' baselines.
 
+### Location sources
+
+| Source | Meaning | Dashboard |
+|---|---|---|
+| **LIVE** | the GPS (PA1010D) has a fix right now (< 10 s old) | green "GPS LIVE", accuracy ± m (estimate: HDOP × 5) |
+| **LAST** | the last good fix; the GPS lost it (indoors, under rubble). Saved in the node's flash, so it survives a restart; after a restart the age is unknown | orange "LAST 5 min" with its age |
+| **MANUAL** | typed in on the dashboard ("Set location manually" → SETLOC). A LIVE fix always wins; MANUAL beats LAST only if it's newer | blue "MANUAL" with its label |
+| **NONE** | nothing known | "NO POSITION" (listed beside the radar) |
+
+## Using the dashboard as a team
+
+Open `http://<base-station>:8000` on every laptop/tablet at the command post. Everything is shared:
+an acknowledgement, a team assignment or a note made on one screen appears on all of them.
+
+1. **Set up once:** click the incident name to rename it; on **Situation**, enter the base
+   (command post) location so the radar can place nodes; click **👤** to enter your name
+   (recorded with your acknowledgements); click **🔇** to turn the alert sound on.
+2. **Work the triage list (main view).** It is sorted by urgency, then by who has waited longest:
+
+   | Order | Status | Guidance (also shown as tooltip and in the detail panel) |
+   |---|---|---|
+   | 1 | ⚠ **UNRESPONSIVE** (red, pulsing) | Breathing detected but no answer to calls: possible unconscious survivor. HIGH PRIORITY. |
+   | 2 | ✔ **CONFIRMED** (green) | Conscious survivor in contact at this node. Dispatch extraction team. |
+   | 3 | ● **LIKELY** (yellow) | Probable survivor responding. Attempt contact. |
+   | 4 | ◐ **POSSIBLE** (orange) | Weak sign of life. Investigate when able. |
+   | 5 | ○ **NO SIGNS** (gray) | No evidence yet. |
+   | 6 | ✕ **LOST** (dark) | Node silent: check battery or radio. |
+   | flag | ⛔ **DANGER** | Pile movement / danger alarm: clear the area. |
+
+3. **Alerts.** When a node becomes UNRESPONSIVE or CONFIRMED, or its danger alarm goes on, a banner
+   appears and a sound repeats every 30 s until someone presses **Acknowledge**. The ack (who,
+   when) shows in the list's Alert column on every screen.
+4. **Click a node** for the detail panel. It shows why the node chose its status (evidence), the
+   call cycle, the CO₂ chart and location (copy lat/lon, distance and bearing from base), and lets
+   you talk to the survivor (Call now, preset or typed messages: the survivor sees them on the
+   node's screen). Use **Assign** to give the node to a team, and add a site tag and notes.
+5. **Situation** is an offline "radar": base in the centre, range rings, north up, nodes coloured
+   by status at their best known position. Nodes without a position are listed beside it.
+6. **Event log**: everything that happened, filterable (Alerts / Survivor comms / Sensors /
+   System). **Export CSV / JSON** downloads the whole log for the after-action report.
+7. **Reset node** only for a confirmed false alarm: it clears the node's evidence and counters.
+   **Danger alarm (test)** sounds the node's siren.
+
+Use the ☀/☾ button to switch between day and night mode.
+
 ## API
 
 | | |
 |---|---|
 | `GET /api/state` | every node's current state + recent timeline |
-| `GET /api/events?n=1&limit=200` | logged messages from SQLite, newest first (`include_bad=true` to see rejected lines) |
+| `GET /api/events?n=1&limit=200` | logged messages from SQLite, newest first, with plain-English `desc` and `cat` (`include_bad=true` to see rejected lines; up to 20000 for export) |
+| `POST /api/ack` | `{"id":12,"by":"Ana"}` or `{"n":2,"by":"Ana"}` (all of a node's alerts) |
+| `POST /api/meta` | `{"incident":"…","base":{"lat":…,"lon":…},"by":"…"}` |
+| `POST /api/node_meta` | `{"n":2,"team":"Team Alpha","tag":"Sector B","notes":"…","by":"…"}` |
 | `POST /api/cmd` | body `{"t":"CALL","n":1}` etc. → `400` if invalid, `503` if the receiver isn't connected |
-| `WS /ws` | full state on connect, then a push for every message |
+| `WS /ws` | full state on connect (nodes, timeline, alerts, incident settings, team notes), then a push for every change |
 
 ## Files
 
 | File | What it does |
 |---|---|
-| `app.py` | web server, WebSocket push, command endpoint, startup options |
+| `app.py` | web server, WebSocket push, commands, alerts + acknowledgements, incident / team settings |
 | `protocol.py` | parses/validates lines, turns them into plain English for the timeline |
 | `state.py` | in-memory status of each node (LOST after 90 s) |
-| `db.py` | SQLite log: `events(ts, node, type, dir, raw)` |
+| `db.py` | SQLite: `events` (every message in/out + base notes), `alerts` (who acked, when), `kv` (incident name, base location), `node_meta` (team, notes, site tag) |
 | `sources.py` | `SerialSource`: reads the receiver in a background thread, reconnects |
-| `simulator.py` | `SimSource`: the fake demo nodes |
-| `node_brain.py` | loads `firmware/node/assess.py` and `co2logic.py` so the simulator and tests use the real node rules |
-| `static/index.html` | the dashboard (vanilla JS, canvas chart) |
+| `simulator.py` | `SimSource`: 3 fake demo nodes |
+| `node_brain.py` | loads the node's plain-Python logic (`assess.py`, `co2logic.py`, `caller.py`, `location.py`) so the simulator and tests use the real node rules |
+| `static/index.html` | the responder dashboard (one offline file: vanilla JS, canvas chart and radar) |
 
 Logs: `base/events.db` (serial) and `base/events_sim.db` (simulator, kept separate so fake
 data never mixes with a real rescue log). On restart, the app rebuilds node state from the last 6 h of the log.
@@ -229,6 +285,7 @@ python -m pytest tests/            # node decision logic: every status category 
 python -m pytest tests/ base/tests # + base station: parser, state, simulator helpers
 ```
 
-`tests/test_logic.py` imports the real node files (`firmware/node/assess.py`, `co2logic.py`,
-`caller.py`, `buttonlogic.py`): they are plain Python and take the time `now` as an argument,
-so the tests run them with a fake clock.
+`tests/test_logic.py` (every status category, arming, priority order) and `tests/test_location.py`
+(LIVE / LAST / MANUAL / NONE, flash save rules) import the real node files (`firmware/node/assess.py`,
+`co2logic.py`, `caller.py`, `buttonlogic.py`, `location.py`): they are plain Python and take the time
+`now` as an argument, so the tests run them with a fake clock.

@@ -50,7 +50,7 @@
 
   /* ---------- top bar ---------- */
   .topbar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center;
-    gap: 8px 14px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    gap: 8px 10px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
   #incident { font-size: 19px; font-weight: 800; background: none; border: 1px dashed transparent; white-space: nowrap;
     padding: 4px 6px; border-radius: 6px; cursor: text; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
   #incident:hover { border-color: var(--line); }
@@ -420,7 +420,8 @@ function renderTop() {
   $("profile").textContent = profs.join(" / ") + " profile";
   const via = source.name === "sim" ? "Simulator" : source.connected ? "USB / LoRa receiver" : "Receiver offline";
   const age = lastRx ? now() - lastRx : null;
-  $("linkText").textContent = `${via} · last packet ${age == null ? "never" : ago(age)}`;
+  $("linkText").textContent = `${via} · ${age == null ? "no packets yet" : ago(age)}`;
+  $("linkText").title = "Last packet from the nodes " + (age == null ? "never" : ago(age));
   $("linkDot").className = "dot " + (source.connected && age != null && age < 60 ? "ok" : "bad");
 }
 
@@ -624,7 +625,7 @@ function renderRadar() {
     else unplaced.push({ nd, l });
   }
   // auto-scale: the smallest ring that fits every node
-  const RINGS = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+  const RINGS = [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
   const far = Math.max(10, ...placed.map((p) => p.d * 1.1));
   const maxR = RINGS.find((r) => r >= far) || far;
   const rings = RINGS.filter((r) => r <= maxR).slice(-4);
@@ -632,7 +633,8 @@ function renderRadar() {
   for (const r of rings) {
     const rr = R * r / maxR;
     g.strokeStyle = line; g.lineWidth = 1; g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.stroke();
-    g.fillStyle = muted; g.textAlign = "left"; g.fillText(fmtDist(r), cx + rr * 0.71 + 4, cy - rr * 0.71 - 4);
+    // label on the lower-right of each ring (nodes are labelled to their right), only if it fits
+    if (rr > 28) { g.fillStyle = muted; g.textAlign = "left"; g.fillText(fmtDist(r), cx + rr * 0.71 + 4, cy + rr * 0.71 + 14); }
   }
   g.strokeStyle = line; g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
   // north arrow
